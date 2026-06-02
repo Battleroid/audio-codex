@@ -72,6 +72,10 @@ public sealed class TranscriptCache
         lock (_ioLock)
         {
             if (!_dirty) return;
+            // Clear the flag *before* snapshotting so a concurrent Set() that lands during the
+            // write re-marks the cache dirty and is captured by the next flush (rather than
+            // having its dirty marker cleared out from under it and being lost).
+            _dirty = false;
             try
             {
                 var snapshot = System.Linq.Enumerable.ToArray(_map);
@@ -99,9 +103,8 @@ public sealed class TranscriptCache
                 }
                 if (File.Exists(_path)) File.Delete(_path);
                 File.Move(tmp, _path);
-                _dirty = false;
             }
-            catch { /* best-effort cache */ }
+            catch { _dirty = true; /* write failed — retry on the next flush */ }
         }
     }
 }

@@ -213,20 +213,24 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private async Task OnGroupByChangedAsync()
     {
         if (!IndexLoaded) return;
-        if (_groupBy == "Soundbank" && !_state.Manager!.SoundbanksBuilt)
-        {
-            IsBusy = true;
-            StatusText = "Building soundbanks…";
-            try
-            {
-                await Task.Run(() => _state.Manager!.BuildSoundbanks((p, msg) =>
-                    Dispatcher.UIThread.Post(() => { ProgressValue = p; ProgressText = msg; })));
-            }
-            catch (Exception ex) { StatusText = "Soundbank build failed: " + ex.Message; }
-            finally { IsBusy = false; ProgressText = ""; }
-        }
+        if (_groupBy == "Soundbank") await EnsureSoundbanksBuiltAsync();
         RebuildGroups();
         ApplyFilter();
+    }
+
+    /// <summary>Build soundbanks once (off the UI thread) if they haven't been built yet.</summary>
+    private async Task EnsureSoundbanksBuiltAsync()
+    {
+        if (_state.Manager is not { SoundbanksBuilt: false }) return;
+        IsBusy = true;
+        StatusText = "Building soundbanks…";
+        try
+        {
+            await Task.Run(() => _state.Manager!.BuildSoundbanks((p, msg) =>
+                Dispatcher.UIThread.Post(() => { ProgressValue = p; ProgressText = msg; })));
+        }
+        catch (Exception ex) { StatusText = "Soundbank build failed: " + ex.Message; }
+        finally { IsBusy = false; ProgressText = ""; }
     }
 
     private void RebuildGroups()
@@ -519,9 +523,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private Task TranscribeGroupAsync()
     {
+        // The "All" group is the whole catalogue — route it through the confirmed all-sounds
+        // path so it can't bypass the warning.
+        if (_selectedGroup is null or { IsAll: true }) return TranscribeAllAsync();
         var list = RowsInSelectedGroup().Select(r => r.Entry).ToList();
-        string label = _selectedGroup is { IsAll: false } g ? g.Label : "all groups";
-        return RunTranscribeAsync(list, label, cleanupDecoded: true);
+        return RunTranscribeAsync(list, _selectedGroup.Label, cleanupDecoded: true);
     }
 
     [RelayCommand]
@@ -543,8 +549,18 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     [RelayCommand]
-    private Task TranscribeVoiceBanksAsync()
-        => RunTranscribeAsync(_state.VoiceBankSounds(), "voice banks", cleanupDecoded: true);
+    private async Task TranscribeVoiceBanksAsync()
+    {
+        if (!_state.Whisper.Available)
+        {
+            StatusText = "Speech recognition unavailable — whisper-cli.exe / model missing under tools/whisper.";
+            return;
+        }
+        // Voice banks are identified by soundbank name, which is only resolved once soundbanks
+        // are built — make sure that has happened before resolving the preset.
+        await EnsureSoundbanksBuiltAsync();
+        await RunTranscribeAsync(_state.VoiceBankSounds(), "voice banks", cleanupDecoded: true);
+    }
 
     [RelayCommand]
     private void CancelTranscribe() => _transcribeCts?.Cancel();
