@@ -163,6 +163,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _selSize = "";
     [ObservableProperty] private bool _hasSelection;
     [ObservableProperty] private string _selTranscript = "";
+    [ObservableProperty] private bool _selTranscriptCorrected;
 
     // ---- playback ----
     [ObservableProperty] private float[]? _peaks;
@@ -376,8 +377,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         SelName = s.DisplayName; SelTagId = s.TagId; SelPackage = s.PackageName;
         SelSize = FormatBytes(s.Size);
         SelCodec = SelChannels = SelRate = SelDuration = "…";
-        SelTranscript = _state.TranscriptCache.TryGet(_state.CacheKey(s), out var tcs) && !tcs.NoSpeech
-            ? tcs.Text : "";
+        bool hasT = _state.TranscriptCache.TryGet(_state.CacheKey(s), out var tcs) && !tcs.NoSpeech;
+        SelTranscript = hasT ? tcs!.Text : "";
+        SelTranscriptCorrected = hasT && tcs!.Corrected;
 
         try
         {
@@ -594,6 +596,30 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     [RelayCommand]
     private void CancelTranscribe() => _transcribeCts?.Cancel();
+
+    /// <summary>Re-snap every cached transcript to the nearest canonical in-game line.</summary>
+    [RelayCommand]
+    private async Task RecorrectTranscriptsAsync()
+    {
+        if (_state.Manager == null) { StatusText = "Load sounds first."; return; }
+        if (IsTranscribing) { StatusText = "A run is already in progress."; return; }
+        IsTranscribing = true; TranscribeProgress = 0; TranscribeStatus = "Correcting…";
+        try
+        {
+            int changed = await Task.Run(() => _state.RecorrectCache((p, m) =>
+                Dispatcher.UIThread.Post(() => { TranscribeProgress = p; TranscribeStatus = m; })));
+            foreach (var row in Items)
+                if (_state.TranscriptCache.TryGet(_state.CacheKey(row.Entry), out var c) && !c.NoSpeech)
+                    row.Transcript = c.Text;
+            if (SelectedRow != null
+                && _state.TranscriptCache.TryGet(_state.CacheKey(SelectedRow.Entry), out var sc) && !sc.NoSpeech)
+            { SelTranscript = sc.Text; SelTranscriptCorrected = sc.Corrected; }
+            ApplyFilter(); UpdateSpeechCount();
+            StatusText = $"Re-corrected {changed:N0} transcripts against the in-game text corpus.";
+        }
+        catch (Exception ex) { StatusText = "Re-correction failed: " + ex.Message; }
+        finally { IsTranscribing = false; TranscribeStatus = ""; }
+    }
 
     private async Task RunTranscribeAsync(IReadOnlyList<SoundEntry> targets, string label, bool cleanupDecoded)
     {

@@ -21,6 +21,25 @@ sealed class Program
             TranscribeCli.Run(args).GetAwaiter().GetResult();
             return;
         }
+        if (args.Length > 0 && args[0] == "--corpus")
+        {
+            var st = Services.AppState.Instance;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            st.BuildIndex((p, m) => { });
+            var corp = st.EnsureCorpus((p, m) => { });
+            System.Console.WriteLine($"corpus: {corp.WordCount:N0} words, built in {sw.ElapsedMilliseconds} ms");
+            foreach (var line in new[] {
+                "indiscriminate force from the UESD is equally misguided however",
+                "data integrity low data integrity low",
+                "leave the airier",
+                "and now we're going to be making a new video",
+            })
+            {
+                var r = corp.Correct(line);
+                System.Console.WriteLine($"\nASR : {line}\nFIX : {(r is { } h ? $"{h.text}  [{h.score:F3}]" : "(no match)")}");
+            }
+            return;
+        }
         if (args.Length > 0 && args[0] == "--config")
         {
             var c = Services.AppState.Instance.Config;

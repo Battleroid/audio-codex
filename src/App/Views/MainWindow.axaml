@@ -161,6 +161,9 @@
                             <MenuItem Header="Transcribe voice banks" Command="{Binding TranscribeVoiceBanksCommand}"/>
                             <Separator/>
                             <MenuItem Header="Transcribe all sounds…" Command="{Binding TranscribeAllCommand}"/>
+                            <Separator/>
+                            <MenuItem Header="Re-correct transcripts (snap to in-game text)"
+                                      Command="{Binding RecorrectTranscriptsCommand}"/>
                         </MenuFlyout>
                     </Button.Flyout>
                 </Button>
@@ -349,9 +352,13 @@
 
                         <!-- transcript -->
                         <StackPanel Spacing="8" IsVisible="{Binding WhisperAvailable}">
-                            <Grid ColumnDefinitions="*,Auto">
+                            <Grid ColumnDefinitions="Auto,Auto,*,Auto">
                                 <TextBlock Grid.Column="0" Text="TRANSCRIPT" Classes="k" VerticalAlignment="Center"/>
-                                <Button Grid.Column="1" Content="Transcribe this sound"
+                                <TextBlock Grid.Column="1" Text="◆ in-game text" Foreground="#c8f000" FontSize="10"
+                                           Margin="10,0,0,0" VerticalAlignment="Center"
+                                           ToolTip.Tip="Snapped to the nearest canonical localized-string line"
+                                           IsVisible="{Binding SelTranscriptCorrected}"/>
+                                <Button Grid.Column="3" Content="Transcribe this sound"
                                         Command="{Binding TranscribeCurrentCommand}" IsEnabled="{Binding !IsTranscribing}"/>
                             </Grid>
                             <Border Background="#1a1a1f" BorderBrush="#37373d" BorderThickness="1" Padding="14,12" MinHeight="44">

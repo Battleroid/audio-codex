@@ -273,6 +273,51 @@ public sealed class AppState
         "UESC mission comms: terse AI announcements and callouts. " +
         "Terms include exfil, compiler, husk, runner, cryo, signal detected.";
 
+    public StringCorpus? Corpus { get; private set; }
+    private readonly object _corpusLock = new();
+
+    /// <summary>Build (once) the English localized-string corpus used to correct ASR output.</summary>
+    public StringCorpus EnsureCorpus(Action<double, string>? progress = null)
+    {
+        if (Corpus != null) return Corpus;
+        lock (_corpusLock)
+        {
+            if (Corpus == null && Manager != null) Corpus = Manager.BuildStringCorpus(progress);
+            return Corpus ??= new StringCorpus();
+        }
+    }
+
+    /// <summary>Re-run corpus correction over already-cached transcripts (e.g. ones made before
+    /// the corpus existed). Returns the number whose text changed.</summary>
+    public int RecorrectCache(Action<double, string>? progress = null)
+    {
+        progress?.Invoke(0, "Building text corpus…");
+        EnsureCorpus((p, m) => progress?.Invoke(p * 0.3, m));
+        if (Corpus is not { Ready: true } corp) return 0;
+
+        var entries = TranscriptCache.Entries.ToList();
+        int changed = 0, done = 0;
+        foreach (var (key, c) in entries)
+        {
+            done++;
+            if (done % 200 == 0) progress?.Invoke(0.3 + 0.7 * done / entries.Count, $"Correcting {done}/{entries.Count}");
+            if (c.NoSpeech) continue;
+            string raw = string.IsNullOrEmpty(c.RawText) ? c.Text : c.RawText;
+            var m = corp.Correct(raw);
+            string newText = m is { } hit ? hit.text : raw;
+            bool nowCorrected = m is not null;
+            if (c.Text != newText || c.Corrected != nowCorrected || c.RawText != raw)
+            {
+                c.RawText = raw; c.Text = newText; c.Corrected = nowCorrected; c.MatchScore = m?.score ?? 0;
+                TranscriptCache.Set(key, c);
+                changed++;
+            }
+        }
+        TranscriptCache.Flush();
+        progress?.Invoke(1, $"Corrected {changed} transcripts.");
+        return changed;
+    }
+
     public Whisper.Result? Transcribe(SoundEntry s, int threads, CancellationToken ct, bool cleanupDecoded = false)
     {
         string key = CacheKey(s);
@@ -284,6 +329,7 @@ public sealed class AppState
             };
 
         if (Manager == null || !Whisper.Available) return null;
+        EnsureCorpus();
 
         string? wav16 = DecodeTo16kMonoWav(s);
         if (wav16 == null) return null;
@@ -293,11 +339,20 @@ public sealed class AppState
             // (it kills hallucinations too, but losing genuine short lines is worse for our purpose).
             Whisper.Result? r = Whisper.Transcribe(wav16, threads, ct, WhisperPrompt, useVad: false);
             if (r != null)
-                TranscriptCache.Set(key, new CachedTranscript
+            {
+                var c = new CachedTranscript
                 {
-                    Text = r.Text, Language = r.Language,
+                    RawText = r.Text, Text = r.Text, Language = r.Language,
                     NoSpeech = r.NoSpeech, Segments = r.Segments.ToArray(),
-                });
+                };
+                // Snap the noisy transcript to the nearest canonical game line.
+                if (!r.NoSpeech && Corpus is { Ready: true } corp && corp.Correct(r.Text) is { } hit)
+                {
+                    c.Text = hit.text; c.Corrected = true; c.MatchScore = hit.score;
+                    r.Text = hit.text;
+                }
+                TranscriptCache.Set(key, c);
+            }
             return r;
         }
         finally
@@ -328,6 +383,10 @@ public sealed class AppState
             BuildTranscriptIndex();
             return (0, 0);
         }
+
+        // Build the canonical-text corpus once up front so each transcript can be snapped to it.
+        if (Corpus == null) progress(0, "Building text corpus…");
+        EnsureCorpus((p, m) => progress(p * 0.05, m));
 
         int done = 0, speech = 0, sinceFlush = 0;
         var opts = new ParallelOptions { MaxDegreeOfParallelism = w, CancellationToken = ct };

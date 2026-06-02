@@ -213,6 +213,28 @@ public sealed class PackageManager
         return found;
     }
 
+    /// <summary>Build the English localized-string corpus (tag class 0x8080b9ba) for ASR correction.</summary>
+    public StringCorpus BuildStringCorpus(Action<double, string>? progress = null)
+    {
+        var corpus = new StringCorpus();
+        var containers = new List<(TigerPackage pkg, Entry e)>();
+        foreach (var pkg in _byId.Values)
+            foreach (Entry e in pkg.Entries)
+                if (e.Reference == StringCorpus.LocalizedStringsRef && e.FileSize > 64 && e.FileSize < 2_000_000)
+                    containers.Add((pkg, e));
+
+        int done = 0;
+        foreach (var (pkg, e) in containers)
+        {
+            done++;
+            if (done % 50 == 0)
+                progress?.Invoke(done / (double)containers.Count, $"Strings {done}/{containers.Count}");
+            try { corpus.AddContainer(pkg.ReadEntry(e.Index)); } catch { }
+        }
+        corpus.Finish();
+        return corpus;
+    }
+
     public byte[] ReadWem(SoundEntry s) => s.Package.ReadEntry(s.Index);
 
     /// <summary>Read the WEM and fill its RIFF header metadata (cached).</summary>
