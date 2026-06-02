@@ -40,8 +40,15 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(System.EventArgs e)
     {
-        Services.AppState.Instance.FlushCache();
-        Services.AppState.Instance.FlushTranscripts();
+        // Dispose the view model so an in-flight transcribe run is cancelled (killing its
+        // whisper-cli children) and both caches are flushed. Fall back to a direct flush if
+        // the DataContext isn't our VM for some reason.
+        if (Vm is { } vm) vm.Dispose();
+        else
+        {
+            Services.AppState.Instance.FlushCache();
+            Services.AppState.Instance.FlushTranscripts();
+        }
         base.OnClosed(e);
     }
 
