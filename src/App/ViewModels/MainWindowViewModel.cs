@@ -37,6 +37,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private bool _pendingAutoPlay;
     private DispatcherTimer? _searchDebounce;
     private CancellationTokenSource? _transcribeCts;
+    private Task<(int processed, int speech)>? _transcribeTask;
 
     public Func<Task<string?>>? PickFolderAsync;
     /// <summary>Set by the view: shows a yes/no confirmation; returns true to proceed.</summary>
@@ -644,7 +645,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     private async Task RunTranscribeAsync(IReadOnlyList<SoundEntry> targets, string label, bool cleanupDecoded)
     {
-        if (!_state.Whisper.Available)
+        // Parakeet is a self-contained engine; only require Whisper when it's the active engine.
+        bool useParakeet = _state.Config.Engine == "parakeet" && _state.Parakeet.Available;
+        if (!useParakeet && !_state.Whisper.Available)
         {
             StatusText = "Speech recognition unavailable — whisper-cli.exe / model missing under tools/whisper.";
             return;
@@ -681,17 +684,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         TranscribeStatus = $"Starting… ({label})";
         try
         {
-            var (processed, speech) = await _state.BuildTranscripts(targets, (p, msg) =>
+            _transcribeTask = _state.BuildTranscripts(targets, (p, msg) =>
                 Dispatcher.UIThread.Post(() => { TranscribeProgress = p; TranscribeStatus = msg; }),
                 ct, cleanupDecoded, force: force);
+            var (processed, speech) = await _transcribeTask;
 
-            // Reflect new transcripts on the visible rows and re-run the filter.
+            // Reflect new transcripts on the visible rows and re-run the filter. A forced redo can
+            // turn a previously-spoken clip into no-speech, so clear stale text instead of skipping it.
             foreach (var row in Items)
-                if (_state.TranscriptCache.TryGet(_state.CacheKey(row.Entry), out var c) && !c.NoSpeech)
-                    row.Transcript = c.Text;
+                if (_state.TranscriptCache.TryGet(_state.CacheKey(row.Entry), out var c))
+                    row.Transcript = c.NoSpeech ? "" : c.Text;
             if (SelectedRow != null
-                && _state.TranscriptCache.TryGet(_state.CacheKey(SelectedRow.Entry), out var sc) && !sc.NoSpeech)
-                SelTranscript = sc.Text;
+                && _state.TranscriptCache.TryGet(_state.CacheKey(SelectedRow.Entry), out var sc))
+            { SelTranscript = sc.NoSpeech ? "" : sc.Text; SelTranscriptCorrected = !sc.NoSpeech && sc.Corrected; }
             ApplyFilter();
             UpdateSpeechCount();
 
@@ -723,6 +728,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         _flushTimer.Stop();
         _transcribeCts?.Cancel();
+        // Wait (bounded) for an in-flight batch to unwind after cancellation so its own final
+        // TranscriptCache flush completes — otherwise a worker's Set() racing our flush below
+        // could be lost and that clip re-transcribed next run. Cancellation kills the CLI
+        // children promptly, so this returns quickly.
+        try { _transcribeTask?.Wait(TimeSpan.FromSeconds(10)); } catch { }
         _state.FlushCache();
         _state.FlushTranscripts();
         _player.Dispose();

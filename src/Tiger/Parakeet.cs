@@ -75,8 +75,11 @@ public sealed class Parakeet
         {
             using var p = Process.Start(psi)!;
             using var reg = ct.Register(() => { try { if (!p.HasExited) p.Kill(true); } catch { } });
+            // Drain stderr (verbose config/log dump) on a separate task so a full pipe can't
+            // deadlock the stdout read.
+            var errTask = p.StandardError.ReadToEndAsync();
             string outp = p.StandardOutput.ReadToEnd();
-            p.StandardError.ReadToEnd();   // drain logs (config dump etc.)
+            try { errTask.Wait(); } catch { }
             p.WaitForExit();
             if (ct.IsCancellationRequested || p.ExitCode != 0) return null;
 

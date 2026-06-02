@@ -50,8 +50,12 @@ public sealed class AppState
             };
             using var p = System.Diagnostics.Process.Start(psi);
             if (p == null) return false;
-            string o = p.StandardOutput.ReadToEnd();
-            p.WaitForExit(3000);
+            // Drain both pipes asynchronously and bound the wait: if nvidia-smi stalls (driver
+            // init / hung driver) the synchronous ReadToEnd would block app startup forever.
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            _ = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(3000)) { try { p.Kill(true); } catch { } return false; }
+            string o = outTask.Wait(500) ? outTask.Result : "";
             return o.Contains("GPU");
         }
         catch { return false; }
@@ -184,6 +188,9 @@ public sealed class AppState
         if (File.Exists(WordlistPath)) mgr.LoadWordlist(WordlistPath);
         mgr.Index(progress);
         Manager = mgr;
+        // The corpus is built from the previous package set; drop it so it's rebuilt against the
+        // newly indexed packages (otherwise ASR output is snapped to stale localized strings).
+        lock (_corpusLock) { Corpus = null; }
         return mgr;
     }
 
@@ -522,7 +529,7 @@ public sealed class AppState
                 {
                     string? full = DecodeToWav(s);
                     string dnDir = Path.Combine(TempDir, "denoise");
-                    string? dnFull = full != null ? DeepFilter.Denoise(full, dnDir) : null;
+                    string? dnFull = full != null ? DeepFilter.Denoise(full, dnDir, ct) : null;
                     string? dn16 = dnFull != null ? Resample16kMono(dnFull) : null;
                     if (dn16 != null)
                     {
@@ -569,8 +576,10 @@ public sealed class AppState
     {
         var (w, t) = ResolveConcurrency(workers, threadsPerWorker);
         // force => re-transcribe everything (e.g. user switched engines); otherwise skip cached.
-        var todo = force ? targets.ToList()
-                         : targets.Where(s => !TranscriptCache.TryGet(CacheKey(s), out _)).ToList();
+        // Empty/placeholder WEM stubs can't decode, so drop them up front — otherwise an all-catalog
+        // run keeps re-queuing the same known-invalid entries on every rerun (no "all cached" fast path).
+        var todo = (force ? targets : targets.Where(s => !TranscriptCache.TryGet(CacheKey(s), out _)))
+                   .Where(s => !s.IsEmpty).ToList();
         int total = todo.Count;
         if (total == 0)
         {

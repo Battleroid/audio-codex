@@ -15,12 +15,15 @@ public static class TranscribeCli
     public static async Task Run(string[] args)
     {
         var state = AppState.Instance;
+        bool useParakeet = state.Config.Engine == "parakeet" && state.Parakeet.Available;
         Console.WriteLine($"GameDir valid: {state.GameDirValid} ({state.Config.GameDir})");
-        Console.WriteLine($"whisper available: {state.Whisper.Available}");
+        Console.WriteLine($"engine: {(useParakeet ? "parakeet" : "whisper")} " +
+                          $"(whisper={state.Whisper.Available}, parakeet={state.Parakeet.Available})");
         if (!state.GameDirValid) { Console.WriteLine("ABORT: game dir invalid"); return; }
-        if (!state.Whisper.Available)
+        if (!useParakeet && !state.Whisper.Available)
         {
-            Console.WriteLine("ABORT: whisper-cli.exe / ggml-base.en.bin not found under tools/whisper");
+            Console.WriteLine("ABORT: no engine available — whisper-cli.exe / ggml-base.en.bin missing under tools/whisper");
+            Console.WriteLine("(or select the Parakeet engine and install its runtime/model)");
             return;
         }
 
