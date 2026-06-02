@@ -17,6 +17,7 @@ public sealed class AppConfig
     public string? ExportDir { get; set; }
     public string? WordlistFile { get; set; }
     public float Volume { get; set; } = 0.6f;
+    public bool DenoiseFallback { get; set; }   // retry borderline transcripts on denoised audio
     // Transcription concurrency overrides; null/0 = auto-adapt to the machine.
     public int? TranscribeWorkers { get; set; }
     public int? TranscribeThreads { get; set; }
@@ -31,6 +32,7 @@ public sealed class AppState
     public PackageManager? Manager { get; private set; }
     public Vgmstream Vgm { get; }
     public Whisper Whisper { get; }
+    public DeepFilter DeepFilter { get; }
     public MetaCache MetaCache { get; }
     public TranscriptCache TranscriptCache { get; }
     public TranscriptIndex Index { get; } = new();
@@ -58,6 +60,7 @@ public sealed class AppState
         string whisperModel = Path.Combine(AppContext.BaseDirectory, "tools", "whisper", "ggml-base.en.bin");
         string whisperVad = Path.Combine(AppContext.BaseDirectory, "tools", "whisper", "ggml-silero-v5.1.2.bin");
         Whisper = new Whisper(whisperExe, whisperModel, whisperVad);
+        DeepFilter = new DeepFilter(Path.Combine(AppContext.BaseDirectory, "tools", "deepfilter", "deep-filter.exe"));
 
         MetaCache = new MetaCache(Path.Combine(appData, "meta-cache.bin"));
         MetaCache.Load();
@@ -122,6 +125,7 @@ public sealed class AppState
                 root["Volume"] = Config.Volume;
                 root["TranscribeWorkers"] = Config.TranscribeWorkers;
                 root["TranscribeThreads"] = Config.TranscribeThreads;
+                root["DenoiseFallback"] = Config.DenoiseFallback;
 
                 File.WriteAllText(_configPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             }
@@ -253,11 +257,16 @@ public sealed class AppState
     public string? DecodeTo16kMonoWav(SoundEntry s)
     {
         string? src = DecodeToWav(s);
-        if (src == null || !File.Exists(src)) return null;
+        return src == null ? null : Resample16kMono(src);
+    }
 
+    /// <summary>Resample any WAV to the 16 kHz mono 16-bit WAV whisper requires.</summary>
+    private string? Resample16kMono(string src)
+    {
+        if (!File.Exists(src)) return null;
         string dir = Path.Combine(TempDir, "whisper");
         Directory.CreateDirectory(dir);
-        string outPath = Path.Combine(dir, $"{s.TagId}_{Guid.NewGuid():N}.16k.wav");
+        string outPath = Path.Combine(dir, $"{Guid.NewGuid():N}.16k.wav");
         using var reader = new AudioFileReader(src);
         ISampleProvider mono = reader.WaveFormat.Channels == 1 ? reader : new MonoSampleProvider(reader);
         var resampler = new WdlResamplingSampleProvider(mono, 16000);
@@ -340,16 +349,37 @@ public sealed class AppState
             Whisper.Result? r = Whisper.Transcribe(wav16, threads, ct, WhisperPrompt, useVad: false);
             if (r != null)
             {
+                string rawText = r.Text;
+                bool ready = !r.NoSpeech && Corpus is { Ready: true };
+                var m = ready ? Corpus!.Correct(rawText, 0.2) : null;   // best corpus match (score >= 0.2)
+
+                // Gated denoise retry (opt-in): only for promising-but-unconfirmed lines, and only
+                // adopt the denoised result if it matches the corpus strictly better. Blanket denoise
+                // hurts ASR (validated), so this never touches confirmed or clearly-garbage lines.
+                if (Config.DenoiseFallback && DeepFilter.Available && ready && m is { } mm && mm.score < 0.62)
+                {
+                    string? full = DecodeToWav(s);
+                    string dnDir = Path.Combine(TempDir, "denoise");
+                    string? dnFull = full != null ? DeepFilter.Denoise(full, dnDir) : null;
+                    string? dn16 = dnFull != null ? Resample16kMono(dnFull) : null;
+                    if (dn16 != null)
+                    {
+                        var r2 = Whisper.Transcribe(dn16, threads, ct, WhisperPrompt, useVad: false);
+                        try { File.Delete(dn16); } catch { }
+                        try { File.Delete(dnFull!); } catch { }
+                        if (r2 is { NoSpeech: false } && Corpus!.Correct(r2.Text, 0.2) is { } m2 && m2.score > mm.score)
+                        { r = r2; rawText = r2.Text; m = m2; }
+                    }
+                }
+
                 var c = new CachedTranscript
                 {
-                    RawText = r.Text, Text = r.Text, Language = r.Language,
+                    RawText = rawText, Text = rawText, Language = r.Language,
                     NoSpeech = r.NoSpeech, Segments = r.Segments.ToArray(),
                 };
-                // Snap the noisy transcript to the nearest canonical game line.
-                if (!r.NoSpeech && Corpus is { Ready: true } corp && corp.Correct(r.Text) is { } hit)
+                if (m is { } hit && hit.score >= 0.62)   // confirmed -> snap to canonical line
                 {
-                    c.Text = hit.text; c.Corrected = true; c.MatchScore = hit.score;
-                    r.Text = hit.text;
+                    c.Text = hit.text; c.Corrected = true; c.MatchScore = hit.score; r.Text = hit.text;
                 }
                 TranscriptCache.Set(key, c);
             }

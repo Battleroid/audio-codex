@@ -24,6 +24,9 @@ tools/whisper/*.dll
 tools/whisper/*.bin
 tools/whisper/*.zip
 
+# DeepFilterNet denoiser binary (third-party; fetched, not committed)
+tools/deepfilter/*.exe
+
 # Logs
 *.log
 

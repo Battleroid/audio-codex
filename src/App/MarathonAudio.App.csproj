@@ -28,6 +28,14 @@
     </None>
   </ItemGroup>
 
+  <!-- Bundle DeepFilterNet (deep-filter.exe) for the optional denoise retry -->
+  <ItemGroup>
+    <None Include="..\..\tools\deepfilter\**\*">
+      <Link>tools\deepfilter\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.0.4" />
     <PackageReference Include="Avalonia.Desktop" Version="12.0.4" />

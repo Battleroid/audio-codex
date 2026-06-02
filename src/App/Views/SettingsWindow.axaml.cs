@@ -27,6 +27,7 @@ public partial class SettingsWindow : Window
         WordlistBox.Text = _state.Config.WordlistFile ?? "";
         WorkersBox.Text = _state.Config.TranscribeWorkers?.ToString() ?? "";
         ThreadsBox.Text = _state.Config.TranscribeThreads?.ToString() ?? "";
+        DenoiseBox.IsChecked = _state.Config.DenoiseFallback;
         _origGameDir = _state.Config.GameDir;
         _origWordlist = _state.Config.WordlistFile;
 
@@ -79,6 +80,8 @@ public partial class SettingsWindow : Window
         int? workers = int.TryParse((WorkersBox.Text ?? "").Trim(), out int wv) && wv > 0 ? wv : null;
         int? threads = int.TryParse((ThreadsBox.Text ?? "").Trim(), out int tv) && tv > 0 ? tv : null;
         _state.SetTranscribeConcurrency(workers, threads);
+        _state.Config.DenoiseFallback = DenoiseBox.IsChecked == true;
+        _state.Save();
 
         Close(new SettingsResult
         {

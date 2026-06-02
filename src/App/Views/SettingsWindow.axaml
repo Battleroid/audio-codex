@@ -78,6 +78,9 @@
                 </StackPanel>
             </Grid>
             <TextBlock Name="ConcurrencyHint" Classes="hint"/>
+            <CheckBox Name="DenoiseBox" Margin="0,6,0,0" Content="Denoise retry for borderline lines (experimental)"/>
+            <TextBlock Classes="hint" Margin="0"
+                       Text="Re-transcribes only unconfirmed lines on denoised audio and keeps it only if it matches the in-game text better. Marginal; off by default."/>
         </StackPanel>
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,6,0,0">
