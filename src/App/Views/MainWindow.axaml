@@ -220,9 +220,14 @@
                     </Grid>
                     <TextBox Watermark="Search name, tag, package, or spoken words…" Text="{Binding SearchText, Mode=TwoWay}"/>
                     <Grid ColumnDefinitions="Auto,*,Auto">
-                        <CheckBox Grid.Column="0" IsChecked="{Binding FuzzyTranscriptSearch, Mode=TwoWay}"
-                                  IsVisible="{Binding WhisperAvailable}"
-                                  Foreground="#9b9ba3" FontSize="11" Content="≈ similar words"/>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="14">
+                            <CheckBox IsChecked="{Binding SpeechOnly, Mode=TwoWay}"
+                                      IsVisible="{Binding WhisperAvailable}"
+                                      Foreground="#9b9ba3" FontSize="11" Content="speech only"/>
+                            <CheckBox IsChecked="{Binding FuzzyTranscriptSearch, Mode=TwoWay}"
+                                      IsVisible="{Binding WhisperAvailable}"
+                                      Foreground="#9b9ba3" FontSize="11" Content="≈ similar words"/>
+                        </StackPanel>
                         <TextBlock Grid.Column="1" Text="{Binding ResultCountText}" Classes="k"
                                    VerticalAlignment="Center" Margin="10,0,0,0"/>
                         <TextBlock Grid.Column="2" Text="{Binding SelectionInfo}" Foreground="#c8f000" FontSize="11"

@@ -91,6 +91,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         set { if (SetProperty(ref _fuzzyTranscriptSearch, value)) DebouncedFilter(); }
     }
 
+    private bool _speechOnly;
+    public bool SpeechOnly
+    {
+        get => _speechOnly;
+        set { if (SetProperty(ref _speechOnly, value)) ApplyFilter(); }
+    }
+
     // ---- catalogue ----
     [ObservableProperty] private IReadOnlyList<SoundRow> _items = Array.Empty<SoundRow>();
     [ObservableProperty] private string _resultCountText = "";
@@ -282,6 +289,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         string q = _searchText.Trim();
         IEnumerable<SoundRow> src = RowsInSelectedGroup();
+        if (_speechOnly)
+            src = src.Where(x => _state.TranscriptCache.TryGet(_state.CacheKey(x.Entry), out var tc) && !tc.NoSpeech);
         if (q.Length > 0)
         {
             // Fuzzy "similar word" matches come from the inverted index (only when toggled on).
