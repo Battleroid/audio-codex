@@ -1,0 +1,22 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MarathonAudio.App.App"
+             xmlns:local="using:MarathonAudio.App"
+             RequestedThemeVariant="Default">
+             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+
+    <Application.DataTemplates>
+        <local:ViewLocator/>
+    </Application.DataTemplates>
+
+    <Application.Resources>
+        <!-- Fonts extracted from the game (PP Fraktion Mono = the in-game "Fraktion Mono";
+             MarathonShapiro Wide 65 = the wide display face). Folder URIs let weights resolve. -->
+        <FontFamily x:Key="MonoFont">avares://MarathonAudio.App/Assets/Fonts#PP Fraktion Mono</FontFamily>
+        <FontFamily x:Key="DisplayFont">avares://MarathonAudio.App/Assets/Fonts#MarathonShapiro Wide 65</FontFamily>
+    </Application.Resources>
+
+    <Application.Styles>
+        <FluentTheme />
+    </Application.Styles>
+</Application>

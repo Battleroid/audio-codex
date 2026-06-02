@@ -1,0 +1,26 @@
+# Build output
+bin/
+obj/
+publish/
+*.user
+.vs/
+
+# Commercial fonts extracted from the game — not redistributed in source.
+# The app falls back to a system font if these are absent; drop your own
+# PP Fraktion Mono / MarathonShapiro OTFs here to restore the in-game look.
+src/App/Assets/Fonts/*.otf
+
+# Python reverse-engineering scratch (kept out of the C# repo)
+*.py
+mara/
+__pycache__/
+
+# Downloaded archive (the extracted tools/vgmstream/ folder is what's used)
+tools/vgmstream.zip
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+.DS_Store

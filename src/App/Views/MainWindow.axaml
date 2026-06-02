@@ -1,0 +1,310 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:MarathonAudio.App.ViewModels"
+        xmlns:ctl="using:MarathonAudio.App.Controls"
+        xmlns:tiger="using:Tiger"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1160" d:DesignHeight="780"
+        x:Class="MarathonAudio.App.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        RequestedThemeVariant="Dark"
+        Width="1180" Height="800" MinWidth="900" MinHeight="580"
+        Background="#16161a"
+        FontFamily="{StaticResource MonoFont}"
+        Title="Audio Codex">
+
+    <Window.Resources>
+        <SolidColorBrush x:Key="Accent" Color="#c8f000"/>
+        <SolidColorBrush x:Key="Surface" Color="#c7c6c3"/>
+        <SolidColorBrush x:Key="SurfaceHi" Color="#e9e8e5"/>
+        <SolidColorBrush x:Key="SurfaceInk" Color="#0c0c0d"/>
+        <SolidColorBrush x:Key="SurfaceSub" Color="#4a4a48"/>
+        <SolidColorBrush x:Key="Outline" Color="#37373d"/>
+        <SolidColorBrush x:Key="Outline2" Color="#48484f"/>
+        <SolidColorBrush x:Key="TextC" Color="#e8e8e6"/>
+        <SolidColorBrush x:Key="TextDim" Color="#9b9ba3"/>
+        <SolidColorBrush x:Key="TextFaint" Color="#6a6a72"/>
+    </Window.Resources>
+
+    <Window.Styles>
+        <!-- zero radius everywhere -->
+        <Style Selector="Button">
+            <Setter Property="CornerRadius" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="#48484f"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="#e8e8e6"/>
+            <Setter Property="Padding" Value="13,6"/>
+        </Style>
+        <Style Selector="Button:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#161618"/>
+            <Setter Property="BorderBrush" Value="#48484f"/>
+        </Style>
+        <Style Selector="Button.primary">
+            <Setter Property="Background" Value="#c7c6c3"/>
+            <Setter Property="Foreground" Value="#0c0c0d"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#e9e8e5"/>
+        </Style>
+
+        <Style Selector="TextBox">
+            <Setter Property="CornerRadius" Value="0"/>
+            <Setter Property="Background" Value="#0a0a0b"/>
+            <Setter Property="BorderBrush" Value="#48484f"/>
+            <Setter Property="Foreground" Value="#e8e8e6"/>
+        </Style>
+        <Style Selector="ComboBox">
+            <Setter Property="CornerRadius" Value="0"/>
+            <Setter Property="Background" Value="#0a0a0b"/>
+            <Setter Property="BorderBrush" Value="#48484f"/>
+        </Style>
+
+        <Style Selector="TextBlock.k">
+            <Setter Property="Foreground" Value="#8c8c92"/>
+            <Setter Property="FontSize" Value="10"/>
+        </Style>
+        <Style Selector="TextBlock.v">
+            <Setter Property="Foreground" Value="#e8e8e6"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <!-- accent scrollbar thumb (easier to spot) -->
+        <Style Selector="ScrollBar:vertical /template/ Thumb">
+            <Setter Property="Background" Value="#c8f000"/>
+        </Style>
+        <Style Selector="ScrollBar:horizontal /template/ Thumb">
+            <Setter Property="Background" Value="#c8f000"/>
+        </Style>
+        <Style Selector="ScrollBar Thumb">
+            <Setter Property="Background" Value="#c8f000"/>
+        </Style>
+        <Style Selector="ScrollBar Thumb:pointerover">
+            <Setter Property="Background" Value="#d8ff1a"/>
+        </Style>
+
+        <!-- ===== filled card list rows (compact density) ===== -->
+        <Style Selector="ListBox">
+            <Setter Property="CornerRadius" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="CornerRadius" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0,0,0,5"/>
+            <Setter Property="MinHeight" Value="0"/>
+        </Style>
+        <!-- neutralize the theme's own item background/highlight; the card Border draws the visuals -->
+        <Style Selector="ListBoxItem /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="CornerRadius" Value="0"/>
+        </Style>
+        <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <!-- the actual filled card (always light → dark text stays readable) -->
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="#a9a8a4"/>
+            <Setter Property="BorderBrush" Value="#a9a8a4"/>
+            <Setter Property="BorderThickness" Value="3,0,0,0"/>
+        </Style>
+        <Style Selector="ListBoxItem:pointerover Border.card">
+            <Setter Property="Background" Value="#bcbbb8"/>
+            <Setter Property="BorderBrush" Value="#bcbbb8"/>
+        </Style>
+        <Style Selector="ListBoxItem:selected Border.card">
+            <Setter Property="Background" Value="#e9e8e5"/>
+            <Setter Property="BorderBrush" Value="#c8f000"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="#1f1f24" Padding="14,10" BorderBrush="#37373d" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" VerticalAlignment="Center">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <Border Width="13" Height="13" Background="#c8f000"/>
+                    <StackPanel>
+                        <TextBlock Text="AUDIO CODEX" Foreground="#e8e8e6" FontSize="19"
+                                   FontFamily="{StaticResource DisplayFont}"/>
+                        <TextBlock Text="{Binding GameDirText}" Foreground="#8c8c94" FontSize="11"/>
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" Margin="0,0,14,0" VerticalAlignment="Center">
+                    <TextBlock Text="VOL" Foreground="#9a9aa0" FontSize="11" VerticalAlignment="Center"/>
+                    <Slider Width="120" Minimum="0" Maximum="1" Value="{Binding Volume, Mode=TwoWay}"
+                            Foreground="#c8f000" VerticalAlignment="Center"/>
+                </StackPanel>
+                <Border Grid.Column="3" Margin="8,0" Padding="8,4" Background="#161618"
+                        VerticalAlignment="Center" IsVisible="{Binding !VgmAvailable}">
+                    <TextBlock Text="vgmstream not found" Foreground="#c8f000" FontSize="11"/>
+                </Border>
+                <Button Grid.Column="4" Content="Export" Margin="0,0,8,0" IsEnabled="{Binding IndexLoaded}">
+                    <Button.Flyout>
+                        <MenuFlyout>
+                            <MenuItem Header="Export selected" Command="{Binding ExportSelectedCommand}"/>
+                            <MenuItem Header="Export listed (current filter)" Command="{Binding ExportListedCommand}"/>
+                            <MenuItem Header="Export all sounds" Command="{Binding ExportAllCommand}"/>
+                        </MenuFlyout>
+                    </Button.Flyout>
+                </Button>
+                <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8">
+                    <Button Content="Settings" Click="OnSettings"/>
+                    <Button Classes="primary" Content="Load sounds" Command="{Binding LoadIndexCommand}" IsEnabled="{Binding !IsBusy}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Progress -->
+        <Border Grid.Row="1" Background="#1f1f24" Padding="14,6" IsVisible="{Binding IsBusy}">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                <ProgressBar Grid.Column="0" Minimum="0" Maximum="1" Value="{Binding ProgressValue}" Height="4"
+                             Foreground="#c8f000" Background="#26262b"/>
+                <TextBlock Grid.Column="1" Text="{Binding ProgressText}" Foreground="#9b9ba3" FontSize="11" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <!-- Body -->
+        <Grid Grid.Row="2" ColumnDefinitions="430,*">
+
+            <!-- List -->
+            <Grid Grid.Column="0" RowDefinitions="Auto,*" Background="#1f1f24">
+                <StackPanel Grid.Row="0" Margin="14,14,14,8" Spacing="8">
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                        <ComboBox Grid.Column="0" Width="132" ItemsSource="{Binding GroupByOptions}"
+                                  SelectedItem="{Binding GroupBy}"/>
+                        <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" MaxDropDownHeight="460"
+                                  ItemsSource="{Binding Groups}" SelectedItem="{Binding SelectedGroup}">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:GroupOption">
+                                    <TextBlock Text="{Binding Display}"/>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </Grid>
+                    <TextBox Watermark="Search by name, tag id, or package…" Text="{Binding SearchText, Mode=TwoWay}"/>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="{Binding ResultCountText}" Classes="k"/>
+                        <TextBlock Grid.Column="1" Text="{Binding SelectionInfo}" Foreground="#c8f000" FontSize="11"/>
+                    </Grid>
+                </StackPanel>
+
+                <ListBox Grid.Row="1" Name="SoundList" Margin="14,0,14,12" Background="Transparent"
+                         ItemsSource="{Binding Items}"
+                         SelectedItem="{Binding SelectedRow}"
+                         SelectionMode="Multiple"
+                         SelectionChanged="OnSelectionChanged"
+                         DoubleTapped="OnListDoubleTapped">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:SoundRow">
+                            <Border Classes="card">
+                                <Grid>
+                                    <ctl:WaveformControl Peaks="{Binding MiniPeaks}" DrawBackground="False"
+                                                         ShowPlayhead="False" BarColor="#3a3a38" Opacity="0.16"
+                                                         IsHitTestVisible="False" Margin="3,3,0,3"/>
+                                    <Grid ColumnDefinitions="Auto,*,Auto" Margin="10,9,13,9" AttachedToVisualTree="OnRowAttached">
+                                        <TextBlock Grid.Column="0" Text="{Binding Ordinal}" Foreground="#6b6b67"
+                                                   FontSize="11" MinWidth="34" TextAlignment="Right"
+                                                   VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                        <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DisplayName}" Foreground="#0c0c0d" FontWeight="Bold" FontSize="13"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock Text="{Binding PackageName}" Foreground="#4a4a48" FontSize="11"/>
+                                                <TextBlock Text="{Binding Meta}" Foreground="#6b6b67" FontSize="11"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="2" Text="{Binding DurationText}" Foreground="#4a4a48"
+                                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+
+            <!-- Detail / player -->
+            <Border Grid.Column="1" Background="#16161a" Padding="26,20">
+                <Panel>
+                    <TextBlock Text="SELECT A SOUND" VerticalAlignment="Center" HorizontalAlignment="Center"
+                               Foreground="#6a6a72" FontSize="13"
+                               IsVisible="{Binding !HasSelection}"/>
+
+                    <StackPanel Spacing="18" IsVisible="{Binding HasSelection}">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="{Binding SelName}" Foreground="#e8e8e6" FontSize="30"
+                                       FontFamily="{StaticResource DisplayFont}" TextWrapping="Wrap"/>
+                            <TextBlock Text="{Binding SelPackage}" Foreground="#c8f000" FontSize="12"/>
+                        </StackPanel>
+
+                        <Border Background="#1a1a1f" BorderBrush="#37373d" BorderThickness="1" Padding="20,16">
+                            <Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto" RowSpacing="14">
+                                <StackPanel Grid.Row="0" Grid.Column="0">
+                                    <TextBlock Text="TAG ID" Classes="k"/>
+                                    <TextBlock Text="{Binding SelTagId}" Classes="v"/>
+                                </StackPanel>
+                                <StackPanel Grid.Row="0" Grid.Column="1">
+                                    <TextBlock Text="CODEC" Classes="k"/>
+                                    <TextBlock Text="{Binding SelCodec}" Classes="v"/>
+                                </StackPanel>
+                                <StackPanel Grid.Row="0" Grid.Column="2">
+                                    <TextBlock Text="SIZE" Classes="k"/>
+                                    <TextBlock Text="{Binding SelSize}" Classes="v"/>
+                                </StackPanel>
+                                <StackPanel Grid.Row="1" Grid.Column="0">
+                                    <TextBlock Text="CHANNELS" Classes="k"/>
+                                    <TextBlock Text="{Binding SelChannels}" Classes="v"/>
+                                </StackPanel>
+                                <StackPanel Grid.Row="1" Grid.Column="1">
+                                    <TextBlock Text="SAMPLE RATE" Classes="k"/>
+                                    <TextBlock Text="{Binding SelRate}" Classes="v"/>
+                                </StackPanel>
+                                <StackPanel Grid.Row="1" Grid.Column="2">
+                                    <TextBlock Text="DURATION" Classes="k"/>
+                                    <TextBlock Text="{Binding SelDuration}" Classes="v"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <Border Background="#0e0e13" BorderBrush="#37373d" BorderThickness="1" ClipToBounds="True">
+                            <ctl:WaveformControl x:Name="Waveform" Height="170"
+                                                 Peaks="{Binding Peaks}" Progress="{Binding Progress}"
+                                                 PointerPressed="OnWaveformPressed"/>
+                        </Border>
+
+                        <!-- transport -->
+                        <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                            <Button Grid.Column="0" Classes="primary" Width="150" Height="48"
+                                    FontFamily="{StaticResource DisplayFont}" FontSize="17"
+                                    Content="{Binding PlayGlyph}" Command="{Binding PlayPauseCommand}"/>
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="#9b9ba3" FontSize="13">
+                                <Run Text="{Binding PositionText}"/><Run Text="  /  "/><Run Text="{Binding DurationText}"/>
+                            </TextBlock>
+                        </Grid>
+
+                        <!-- export -->
+                        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <Button Classes="primary" Content="Export selected" Command="{Binding ExportSelectedCommand}" IsEnabled="{Binding !IsBusy}"/>
+                            <TextBlock Text="{Binding ExportTargetText}" Foreground="#8c8c94" FontSize="11" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Panel>
+            </Border>
+        </Grid>
+
+        <!-- Status bar -->
+        <Border Grid.Row="3" Background="#1f1f24" Padding="14,6" BorderBrush="#37373d" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <Border Width="7" Height="7" Background="#c8f000" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding StatusText}" Foreground="#9b9ba3" FontSize="12" VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

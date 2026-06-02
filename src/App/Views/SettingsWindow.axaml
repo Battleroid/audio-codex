@@ -1,0 +1,73 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MarathonAudio.App.Views.SettingsWindow"
+        RequestedThemeVariant="Dark"
+        Width="620" SizeToContent="Height"
+        CanResize="False"
+        Background="#16161a"
+        FontFamily="{StaticResource MonoFont}"
+        WindowStartupLocation="CenterOwner"
+        Title="Settings">
+
+    <Window.Styles>
+        <Style Selector="Button">
+            <Setter Property="CornerRadius" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="#48484f"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style Selector="TextBox">
+            <Setter Property="CornerRadius" Value="0"/>
+            <Setter Property="Background" Value="#0a0a0b"/>
+            <Setter Property="BorderBrush" Value="#48484f"/>
+        </Style>
+        <Style Selector="TextBlock.h">
+            <Setter Property="Foreground" Value="#8a93a6"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Margin" Value="0,0,0,3"/>
+        </Style>
+        <Style Selector="TextBlock.hint">
+            <Setter Property="Foreground" Value="#566173"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Margin" Value="0,3,0,0"/>
+        </Style>
+    </Window.Styles>
+
+    <StackPanel Margin="22" Spacing="18">
+        <TextBlock Text="SETTINGS" Foreground="#e7ebf3" FontSize="20"
+                   FontFamily="{StaticResource DisplayFont}"/>
+
+        <StackPanel Spacing="4">
+            <TextBlock Classes="h" Text="MARATHON GAME FOLDER"/>
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Grid.Column="0" Name="GameBox"/>
+                <Button Grid.Column="1" Content="Browse" Click="BrowseGame"/>
+            </Grid>
+            <TextBlock Classes="hint" Text="The folder containing packages\ and bin\ (provides the Oodle decompressor)."/>
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+            <TextBlock Classes="h" Text="DEFAULT EXPORT FOLDER"/>
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Grid.Column="0" Name="ExportBox"/>
+                <Button Grid.Column="1" Content="Browse" Click="BrowseExport"/>
+            </Grid>
+            <TextBlock Classes="hint" Text="When set, Export sends files here in one click (no folder prompt)."/>
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+            <TextBlock Classes="h" Text="WORDLIST FILE (OPTIONAL)"/>
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                <TextBox Grid.Column="0" Name="WordlistBox"/>
+                <Button Grid.Column="1" Content="Browse" Click="BrowseWordlist"/>
+                <Button Grid.Column="2" Content="Clear" Click="ClearWordlist"/>
+            </Grid>
+            <TextBlock Classes="hint" Text="A list of candidate names; matches reveal real sound/soundbank names (applied immediately)."/>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,6,0,0">
+            <Button Content="Cancel" Click="OnCancel" Width="90"/>
+            <Button Content="Save" Click="OnSave" Width="90" Background="#c8f000" Foreground="#0b0b0c" BorderThickness="0"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
