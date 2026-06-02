@@ -25,6 +25,10 @@ public sealed class SoundEntry
 
     public string DisplayName => Name ?? $"{TagHash:X8}";
     public string TagId => $"{TagHash:X8}";
+
+    /// <summary>Placeholder/empty entry — too small to hold a WEM header (no channels, no data).
+    /// Marathon ships ~hundreds of 1-byte stubs with an invalid Wwise id.</summary>
+    public bool IsEmpty => Size < 64 || WwiseId == 0xFFFFFFFF;
 }
 
 public sealed class SoundbankInfo

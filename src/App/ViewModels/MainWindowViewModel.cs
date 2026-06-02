@@ -109,6 +109,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         set { if (SetProperty(ref _speechOnly, value)) ApplyFilter(); }
     }
 
+    private bool _hideEmpty = true;
+    public bool HideEmpty
+    {
+        get => _hideEmpty;
+        set { if (SetProperty(ref _hideEmpty, value)) ApplyFilter(); }
+    }
+
     // ---- catalogue ----
     [ObservableProperty] private IReadOnlyList<SoundRow> _items = Array.Empty<SoundRow>();
     [ObservableProperty] private string _resultCountText = "";
@@ -301,6 +308,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         string q = _searchText.Trim();
         IEnumerable<SoundRow> src = RowsInSelectedGroup();
+        if (_hideEmpty)
+            src = src.Where(x => !x.Entry.IsEmpty);
         if (_speechOnly)
             src = src.Where(x => _state.TranscriptCache.TryGet(_state.CacheKey(x.Entry), out var tc) && !tc.NoSpeech);
         if (q.Length > 0)

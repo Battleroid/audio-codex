@@ -2,6 +2,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
@@ -37,6 +38,15 @@ public partial class MainWindow : Window
     }
 
     private MainWindowViewModel? Vm => DataContext as MainWindowViewModel;
+
+    private async void OnCopyText(object? sender, TappedEventArgs e)
+    {
+        if (sender is not TextBlock tb || string.IsNullOrEmpty(tb.Text)) return;
+        var clip = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clip == null) return;
+        await clip.SetTextAsync(tb.Text);
+        if (Vm is { } vm) vm.StatusText = $"Copied to clipboard: {tb.Text}";
+    }
 
     protected override void OnClosed(System.EventArgs e)
     {

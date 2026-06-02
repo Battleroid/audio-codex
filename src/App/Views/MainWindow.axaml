@@ -221,6 +221,8 @@
                     <TextBox Watermark="Search name, tag, package, or spoken words…" Text="{Binding SearchText, Mode=TwoWay}"/>
                     <Grid ColumnDefinitions="Auto,*,Auto">
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="14">
+                            <CheckBox IsChecked="{Binding HideEmpty, Mode=TwoWay}"
+                                      Foreground="#9b9ba3" FontSize="11" Content="hide empty"/>
                             <CheckBox IsChecked="{Binding SpeechOnly, Mode=TwoWay}"
                                       IsVisible="{Binding WhisperAvailable}"
                                       Foreground="#9b9ba3" FontSize="11" Content="speech only"/>
@@ -289,14 +291,16 @@
                         <StackPanel Spacing="6">
                             <TextBlock Text="{Binding SelName}" Foreground="#e8e8e6" FontSize="30"
                                        FontFamily="{StaticResource DisplayFont}" TextWrapping="Wrap"/>
-                            <TextBlock Text="{Binding SelPackage}" Foreground="#c8f000" FontSize="12"/>
+                            <TextBlock Text="{Binding SelPackage}" Foreground="#c8f000" FontSize="12"
+                                       Cursor="Hand" Tapped="OnCopyText" ToolTip.Tip="Click to copy"/>
                         </StackPanel>
 
                         <Border Background="#1a1a1f" BorderBrush="#37373d" BorderThickness="1" Padding="20,16">
                             <Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto" RowSpacing="14">
                                 <StackPanel Grid.Row="0" Grid.Column="0">
                                     <TextBlock Text="TAG ID" Classes="k"/>
-                                    <TextBlock Text="{Binding SelTagId}" Classes="v"/>
+                                    <TextBlock Text="{Binding SelTagId}" Classes="v"
+                                               Cursor="Hand" Tapped="OnCopyText" ToolTip.Tip="Click to copy"/>
                                 </StackPanel>
                                 <StackPanel Grid.Row="0" Grid.Column="1">
                                     <TextBlock Text="CODEC" Classes="k"/>
