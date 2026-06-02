@@ -16,6 +16,11 @@ sealed class Program
             SmokeTest.Run();
             return;
         }
+        if (args.Length > 0 && args[0] == "--transcribe")
+        {
+            TranscribeCli.Run(args).GetAwaiter().GetResult();
+            return;
+        }
         if (args.Length > 0 && args[0] == "--config")
         {
             var c = Services.AppState.Instance.Config;

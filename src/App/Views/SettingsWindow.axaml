@@ -65,6 +65,21 @@
             <TextBlock Classes="hint" Text="A list of candidate names; matches reveal real sound/soundbank names (applied immediately)."/>
         </StackPanel>
 
+        <StackPanel Spacing="4">
+            <TextBlock Classes="h" Text="TRANSCRIPTION (SPEECH-TO-TEXT)"/>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                <StackPanel Grid.Column="0" Spacing="3">
+                    <TextBlock Classes="hint" Margin="0" Text="Parallel workers (blank = auto)"/>
+                    <TextBox Name="WorkersBox" Watermark="auto"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="3">
+                    <TextBlock Classes="hint" Margin="0" Text="Threads per worker (blank = auto)"/>
+                    <TextBox Name="ThreadsBox" Watermark="auto"/>
+                </StackPanel>
+            </Grid>
+            <TextBlock Name="ConcurrencyHint" Classes="hint"/>
+        </StackPanel>
+
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,6,0,0">
             <Button Content="Cancel" Click="OnCancel" Width="90"/>
             <Button Content="Save" Click="OnSave" Width="90" Background="#c8f000" Foreground="#0b0b0c" BorderThickness="0"/>

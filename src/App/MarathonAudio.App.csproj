@@ -20,6 +20,14 @@
     </None>
   </ItemGroup>
 
+  <!-- Bundle whisper.cpp (whisper-cli.exe + ggml-base.en.bin) with the app -->
+  <ItemGroup>
+    <None Include="..\..\tools\whisper\**\*">
+      <Link>tools\whisper\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.0.4" />
     <PackageReference Include="Avalonia.Desktop" Version="12.0.4" />

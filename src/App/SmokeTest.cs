@@ -53,6 +53,22 @@ public static class SmokeTest
             Console.WriteLine($"Multichannel {mc.TagId} ({mgr.LoadHeader(mc).Channels}ch) -> downmix loaded, peaks={mcPeaks.Length}");
             p2.Dispose();
         }
+
+        // transcription path: resample to 16k mono + run whisper (if the tool is present)
+        Console.WriteLine($"whisper available: {state.Whisper.Available}");
+        if (state.Whisper.Available)
+        {
+            var (_, threads) = state.ResolveConcurrency();
+            string? wav16 = state.DecodeTo16kMonoWav(s);
+            Console.WriteLine($"DecodeTo16kMonoWav -> {(wav16 ?? "NULL")}");
+            var swt = System.Diagnostics.Stopwatch.StartNew();
+            var tr = state.Transcribe(s, threads, System.Threading.CancellationToken.None, cleanupDecoded: false);
+            Console.WriteLine($"Transcribe {s.TagId} ({swt.ElapsedMilliseconds} ms): lang='{tr?.Language}' " +
+                              $"noSpeech={tr?.NoSpeech} segs={tr?.Segments.Count} text='{tr?.Text}'");
+            state.FlushTranscripts();
+            Console.WriteLine($"transcript cache size {state.TranscriptCache.Count}");
+        }
+
         Console.WriteLine("SMOKE OK");
     }
 }

@@ -1,6 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 using Tiger;
 
 namespace MarathonAudio.App.Services;
@@ -11,6 +17,9 @@ public sealed class AppConfig
     public string? ExportDir { get; set; }
     public string? WordlistFile { get; set; }
     public float Volume { get; set; } = 0.6f;
+    // Transcription concurrency overrides; null/0 = auto-adapt to the machine.
+    public int? TranscribeWorkers { get; set; }
+    public int? TranscribeThreads { get; set; }
 }
 
 /// <summary>Holds configuration, the package manager, and decode services.</summary>
@@ -21,7 +30,10 @@ public sealed class AppState
     public AppConfig Config { get; private set; } = new();
     public PackageManager? Manager { get; private set; }
     public Vgmstream Vgm { get; }
+    public Whisper Whisper { get; }
     public MetaCache MetaCache { get; }
+    public TranscriptCache TranscriptCache { get; }
+    public TranscriptIndex Index { get; } = new();
 
     public string TempDir { get; }
     public string DecodeCacheDir { get; }
@@ -42,8 +54,15 @@ public sealed class AppState
         string toolsExe = Path.Combine(AppContext.BaseDirectory, "tools", "vgmstream", "vgmstream-cli.exe");
         Vgm = new Vgmstream(toolsExe);
 
+        string whisperExe = Path.Combine(AppContext.BaseDirectory, "tools", "whisper", "whisper-cli.exe");
+        string whisperModel = Path.Combine(AppContext.BaseDirectory, "tools", "whisper", "ggml-base.en.bin");
+        Whisper = new Whisper(whisperExe, whisperModel);
+
         MetaCache = new MetaCache(Path.Combine(appData, "meta-cache.bin"));
         MetaCache.Load();
+
+        TranscriptCache = new TranscriptCache(Path.Combine(appData, "transcript-cache.bin"));
+        TranscriptCache.Load();
 
         Load();
     }
@@ -100,6 +119,8 @@ public sealed class AppState
                 root["ExportDir"] = Config.ExportDir;
                 root["WordlistFile"] = Config.WordlistFile;
                 root["Volume"] = Config.Volume;
+                root["TranscribeWorkers"] = Config.TranscribeWorkers;
+                root["TranscribeThreads"] = Config.TranscribeThreads;
 
                 File.WriteAllText(_configPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             }
@@ -116,6 +137,12 @@ public sealed class AppState
     public void SetVolume(float v) { Config.Volume = v; Save(); }
     public void SetExportDir(string? dir) { Config.ExportDir = dir; Save(); }
     public void SetWordlistFile(string? path) { Config.WordlistFile = path; Save(); }
+    public void SetTranscribeConcurrency(int? workers, int? threads)
+    {
+        Config.TranscribeWorkers = workers is > 0 ? workers : null;
+        Config.TranscribeThreads = threads is > 0 ? threads : null;
+        Save();
+    }
 
     /// <summary>Build (or rebuild) the package manager and index. Call off the UI thread.</summary>
     public PackageManager BuildIndex(Action<double, string> progress)
@@ -187,4 +214,148 @@ public sealed class AppState
     }
 
     public void FlushCache() => MetaCache.Flush();
+    public void FlushTranscripts() => TranscriptCache.Flush();
+
+    // ================= Transcription =================
+
+    private static readonly string[] VoiceTokens =
+        { "vo", "vox", "voice", "dlg", "dialog", "dialogue", "narr", "bark", "chatter", "comm", "announc" };
+
+    /// <summary>Resolve effective (workers, threads-per-worker): configured override, else
+    /// auto-adapt to the core count (≈ N/4 processes, the rest as threads each).</summary>
+    public (int workers, int threads) ResolveConcurrency(int workers = 0, int threads = 0)
+    {
+        int cores = Math.Max(1, Environment.ProcessorCount);
+        int w = workers > 0 ? workers : Config.TranscribeWorkers ?? 0;
+        int t = threads > 0 ? threads : Config.TranscribeThreads ?? 0;
+        if (w <= 0) w = Math.Clamp(cores / 4, 1, 8);
+        if (t <= 0) t = Math.Max(1, cores / w);
+        return (w, t);
+    }
+
+    /// <summary>Likely voice/dialogue sounds, identified by soundbank/name tokens. Empty when no
+    /// wordlist is loaded (names unresolved) — transcribe a group or "all" in that case.</summary>
+    public IReadOnlyList<SoundEntry> VoiceBankSounds()
+    {
+        if (Manager == null) return Array.Empty<SoundEntry>();
+        return Manager.Sounds.Where(IsVoiceCandidate).ToList();
+    }
+
+    private static bool IsVoiceCandidate(SoundEntry s)
+    {
+        string hay = ((s.SoundbankName ?? "") + " " + (s.Name ?? "")).ToLowerInvariant();
+        return hay.Length > 0 && VoiceTokens.Any(tok => hay.Contains(tok));
+    }
+
+    /// <summary>Decode a sound and produce a 16 kHz mono 16-bit WAV (what whisper requires).
+    /// Returns the temp path (caller deletes it) or null on failure.</summary>
+    public string? DecodeTo16kMonoWav(SoundEntry s)
+    {
+        string? src = DecodeToWav(s);
+        if (src == null || !File.Exists(src)) return null;
+
+        string dir = Path.Combine(TempDir, "whisper");
+        Directory.CreateDirectory(dir);
+        string outPath = Path.Combine(dir, $"{s.TagId}_{Guid.NewGuid():N}.16k.wav");
+        using var reader = new AudioFileReader(src);
+        ISampleProvider mono = reader.WaveFormat.Channels == 1 ? reader : new MonoSampleProvider(reader);
+        var resampler = new WdlResamplingSampleProvider(mono, 16000);
+        WaveFileWriter.CreateWaveFile16(outPath, resampler);
+        return outPath;
+    }
+
+    /// <summary>Transcribe a single sound, cache-first (like <see cref="GetPreview"/>). When
+    /// <paramref name="cleanupDecoded"/> is set the cached playback WAV is removed afterwards
+    /// (used by big batches to bound temp-disk growth).</summary>
+    public Whisper.Result? Transcribe(SoundEntry s, int threads, CancellationToken ct, bool cleanupDecoded = false)
+    {
+        string key = CacheKey(s);
+        if (TranscriptCache.TryGet(key, out var cached))
+            return new Whisper.Result
+            {
+                Text = cached.Text, Language = cached.Language,
+                NoSpeech = cached.NoSpeech, Segments = cached.Segments.ToList(),
+            };
+
+        if (Manager == null || !Whisper.Available) return null;
+
+        string? wav16 = DecodeTo16kMonoWav(s);
+        if (wav16 == null) return null;
+        try
+        {
+            Whisper.Result? r = Whisper.Transcribe(wav16, threads, ct);
+            if (r != null)
+                TranscriptCache.Set(key, new CachedTranscript
+                {
+                    Text = r.Text, Language = r.Language,
+                    NoSpeech = r.NoSpeech, Segments = r.Segments.ToArray(),
+                });
+            return r;
+        }
+        finally
+        {
+            try { File.Delete(wav16); } catch { }
+            if (cleanupDecoded)
+                try { File.Delete(Path.Combine(DecodeCacheDir, $"{s.TagId}.wav")); } catch { }
+        }
+    }
+
+    /// <summary>Transcribe a list of sounds in parallel (W workers × T threads). Skips anything
+    /// already cached so runs resume and never repeat work. Flushes incrementally; honours cancel.
+    /// Returns (processed-this-run, with-speech-this-run).</summary>
+    public async Task<(int processed, int speech)> BuildTranscripts(
+        IReadOnlyList<SoundEntry> targets,
+        Action<double, string> progress,
+        CancellationToken ct,
+        bool cleanupDecoded = true,
+        int workers = 0,
+        int threadsPerWorker = 0)
+    {
+        var (w, t) = ResolveConcurrency(workers, threadsPerWorker);
+        var todo = targets.Where(s => !TranscriptCache.TryGet(CacheKey(s), out _)).ToList();
+        int total = todo.Count;
+        if (total == 0)
+        {
+            progress(1, "Nothing to transcribe (all cached).");
+            BuildTranscriptIndex();
+            return (0, 0);
+        }
+
+        int done = 0, speech = 0, sinceFlush = 0;
+        var opts = new ParallelOptions { MaxDegreeOfParallelism = w, CancellationToken = ct };
+        try
+        {
+            await Parallel.ForEachAsync(todo, opts, (s, token) =>
+            {
+                Whisper.Result? r = Transcribe(s, t, token, cleanupDecoded);
+                int d = Interlocked.Increment(ref done);
+                if (r is { NoSpeech: false, Text.Length: > 0 }) Interlocked.Increment(ref speech);
+                if (Interlocked.Increment(ref sinceFlush) >= 50)
+                {
+                    Interlocked.Exchange(ref sinceFlush, 0);
+                    TranscriptCache.Flush();
+                }
+                progress(d / (double)total, $"Transcribing {d}/{total} • {Volatile.Read(ref speech)} with speech");
+                return ValueTask.CompletedTask;
+            });
+        }
+        catch (OperationCanceledException) { /* partial progress is preserved below */ }
+        finally
+        {
+            TranscriptCache.Flush();
+            BuildTranscriptIndex();
+        }
+        return (done, speech);
+    }
+
+    /// <summary>Rebuild the in-memory search index from cached transcripts (excludes no-speech).</summary>
+    public void BuildTranscriptIndex()
+    {
+        if (Manager == null) { Index.Build(Array.Empty<(SoundEntry, string)>()); return; }
+        var items = new List<(SoundEntry, string)>();
+        foreach (SoundEntry s in Manager.Sounds)
+            if (TranscriptCache.TryGet(CacheKey(s), out var c) && !c.NoSpeech && c.Text.Length > 0)
+                items.Add((s, c.Text));
+        Index.Build(items);
+    }
 }

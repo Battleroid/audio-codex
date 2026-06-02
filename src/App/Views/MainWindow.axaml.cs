@@ -18,7 +18,10 @@ public partial class MainWindow : Window
         DataContextChanged += (_, _) =>
         {
             if (DataContext is MainWindowViewModel vm)
+            {
                 vm.PickFolderAsync = PickFolderAsync;
+                vm.ConfirmAsync = ConfirmAsync;
+            }
         };
         // Intercept Space before children so it toggles playback (unless typing in a text box).
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
@@ -38,7 +41,47 @@ public partial class MainWindow : Window
     protected override void OnClosed(System.EventArgs e)
     {
         Services.AppState.Instance.FlushCache();
+        Services.AppState.Instance.FlushTranscripts();
         base.OnClosed(e);
+    }
+
+    /// <summary>Minimal modal yes/no confirmation (no XAML); returns true if confirmed.</summary>
+    private async Task<bool> ConfirmAsync(string message)
+    {
+        var yes = new Button
+        {
+            Content = "Transcribe", Width = 120, Background = Avalonia.Media.Brush.Parse("#c8f000"),
+            Foreground = Avalonia.Media.Brush.Parse("#0b0b0c"), BorderThickness = new Avalonia.Thickness(0),
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+        };
+        var no = new Button { Content = "Cancel", Width = 100 };
+        var buttons = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Spacing = 8,
+        };
+        buttons.Children.Add(no);
+        buttons.Children.Add(yes);
+
+        var panel = new StackPanel { Margin = new Avalonia.Thickness(22), Spacing = 18 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Foreground = Avalonia.Media.Brush.Parse("#e8e8e6"), FontSize = 13,
+        });
+        panel.Children.Add(buttons);
+
+        var dlg = new Window
+        {
+            Title = "Confirm", Width = 460, SizeToContent = SizeToContent.Height, CanResize = false,
+            Background = Avalonia.Media.Brush.Parse("#16161a"),
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = panel,
+        };
+        yes.Click += (_, _) => dlg.Close(true);
+        no.Click += (_, _) => dlg.Close(false);
+        return await dlg.ShowDialog<bool>(this);
     }
 
     private async Task<string?> PickFolderAsync()

@@ -25,8 +25,14 @@ public partial class SettingsWindow : Window
         GameBox.Text = _state.Config.GameDir ?? "";
         ExportBox.Text = _state.Config.ExportDir ?? "";
         WordlistBox.Text = _state.Config.WordlistFile ?? "";
+        WorkersBox.Text = _state.Config.TranscribeWorkers?.ToString() ?? "";
+        ThreadsBox.Text = _state.Config.TranscribeThreads?.ToString() ?? "";
         _origGameDir = _state.Config.GameDir;
         _origWordlist = _state.Config.WordlistFile;
+
+        var (w, t) = _state.ResolveConcurrency();
+        ConcurrencyHint.Text = $"{System.Environment.ProcessorCount} logical cores detected · " +
+                               $"auto uses {w} workers × {t} threads.";
     }
 
     private async Task<string?> PickFolder()
@@ -69,6 +75,10 @@ public partial class SettingsWindow : Window
         _state.SetGameDir(game);
         _state.SetExportDir(string.IsNullOrEmpty(export) ? null : export);
         _state.SetWordlistFile(string.IsNullOrEmpty(wordlist) ? null : wordlist);
+
+        int? workers = int.TryParse((WorkersBox.Text ?? "").Trim(), out int wv) && wv > 0 ? wv : null;
+        int? threads = int.TryParse((ThreadsBox.Text ?? "").Trim(), out int tv) && tv > 0 ? tv : null;
+        _state.SetTranscribeConcurrency(workers, threads);
 
         Close(new SettingsResult
         {

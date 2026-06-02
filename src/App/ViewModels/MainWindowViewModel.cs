@@ -36,8 +36,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private int _selectGen;
     private bool _pendingAutoPlay;
     private DispatcherTimer? _searchDebounce;
+    private CancellationTokenSource? _transcribeCts;
 
     public Func<Task<string?>>? PickFolderAsync;
+    /// <summary>Set by the view: shows a yes/no confirmation; returns true to proceed.</summary>
+    public Func<string, Task<bool>>? ConfirmAsync;
 
     public MainWindowViewModel()
     {
@@ -52,7 +55,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         // periodically persist the metadata/waveform cache
         _flushTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
-        _flushTimer.Tick += (_, _) => _state.FlushCache();
+        _flushTimer.Tick += (_, _) => { _state.FlushCache(); _state.FlushTranscripts(); };
         _flushTimer.Start();
 
         NeedsSetup = !_state.GameDirValid;
@@ -60,6 +63,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                                 : "Ready. Click “Load sounds” to index packages.";
         GameDirText = _state.Config.GameDir ?? "(not set)";
         VgmAvailable = _state.Vgm.Available;
+        WhisperAvailable = _state.Whisper.Available;
         Groups.Add(new GroupOption { IsAll = true, Count = 0 });
         _selectedGroup = Groups[0];
         UpdateExportTarget();
@@ -74,6 +78,18 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _gameDirText = "";
     [ObservableProperty] private bool _vgmAvailable;
     [ObservableProperty] private bool _indexLoaded;
+
+    // ---- transcription ----
+    [ObservableProperty] private bool _whisperAvailable;
+    [ObservableProperty] private bool _isTranscribing;
+    [ObservableProperty] private double _transcribeProgress;
+    [ObservableProperty] private string _transcribeStatus = "";
+    private bool _fuzzyTranscriptSearch;
+    public bool FuzzyTranscriptSearch
+    {
+        get => _fuzzyTranscriptSearch;
+        set { if (SetProperty(ref _fuzzyTranscriptSearch, value)) DebouncedFilter(); }
+    }
 
     // ---- catalogue ----
     [ObservableProperty] private IReadOnlyList<SoundRow> _items = Array.Empty<SoundRow>();
@@ -121,6 +137,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _selDuration = "";
     [ObservableProperty] private string _selSize = "";
     [ObservableProperty] private bool _hasSelection;
+    [ObservableProperty] private string _selTranscript = "";
 
     // ---- playback ----
     [ObservableProperty] private float[]? _peaks;
@@ -169,6 +186,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             RebuildGroups();
             ApplyFilter();
+            _state.BuildTranscriptIndex();   // make any previously-cached transcripts searchable
             IndexLoaded = true;
             string names = _state.Manager.Names.WordlistCount > 0
                 ? $" • wordlist: {_state.Manager.Names.WordlistCount}" : "";
@@ -243,9 +261,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
     private void OnDebounceTick(object? s, EventArgs e) { _searchDebounce!.Stop(); ApplyFilter(); }
 
-    private void ApplyFilter()
+    /// <summary>Rows belonging to the currently selected group (or all rows when "All").</summary>
+    private IEnumerable<SoundRow> RowsInSelectedGroup()
     {
-        string q = _searchText.Trim();
         IEnumerable<SoundRow> src = _allRows;
         if (_selectedGroup is { IsAll: false } g)
         {
@@ -253,11 +271,27 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             else if (g.PackageName != null) src = src.Where(r => r.PackageName == g.PackageName);
             else src = src.Where(r => r.Entry.SoundbankTag == g.BankTag);
         }
+        return src;
+    }
+
+    private void ApplyFilter()
+    {
+        string q = _searchText.Trim();
+        IEnumerable<SoundRow> src = RowsInSelectedGroup();
         if (q.Length > 0)
+        {
+            // Fuzzy "similar word" matches come from the inverted index (only when toggled on).
+            HashSet<SoundEntry>? fuzzy = _fuzzyTranscriptSearch
+                ? new HashSet<SoundEntry>(_state.Index.SimilarWords(q))
+                : null;
             src = src.Where(x =>
                 x.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
                 x.TagId.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                x.PackageName.Contains(q, StringComparison.OrdinalIgnoreCase));
+                x.PackageName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (_state.TranscriptCache.TryGet(_state.CacheKey(x.Entry), out var tc)
+                    && !tc.NoSpeech && tc.Text.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
+                (fuzzy != null && fuzzy.Contains(x.Entry)));
+        }
         var result = src as List<SoundRow> ?? src.ToList();
         for (int i = 0; i < result.Count; i++) result[i].Ordinal = i + 1;
         Items = result;
@@ -277,10 +311,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 var r = _state.LoadRowPreview(row.Entry);
+                bool hasTr = _state.TranscriptCache.TryGet(_state.CacheKey(row.Entry), out var tc) && !tc.NoSpeech;
                 if (r is { } v)
                     Dispatcher.UIThread.Post(() =>
                     {
                         row.Meta = v.meta; row.DurationText = v.duration; row.MiniPeaks = v.peaks;
+                        if (hasTr) row.Transcript = tc!.Text;
                     });
             }
             catch { row.LoadRequested = false; }
@@ -306,6 +342,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         SelName = s.DisplayName; SelTagId = s.TagId; SelPackage = s.PackageName;
         SelSize = FormatBytes(s.Size);
         SelCodec = SelChannels = SelRate = SelDuration = "…";
+        SelTranscript = _state.TranscriptCache.TryGet(_state.CacheKey(s), out var tcs) && !tcs.NoSpeech
+            ? tcs.Text : "";
 
         try
         {
@@ -460,6 +498,99 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         finally { IsBusy = false; ProgressText = ""; }
     }
 
+    // ================= Transcription =================
+    [RelayCommand]
+    private Task TranscribeCurrentAsync()
+    {
+        var s = SelectedRow?.Entry;
+        return s == null ? Task.CompletedTask
+                         : RunTranscribeAsync(new[] { s }, "current", cleanupDecoded: false);
+    }
+
+    [RelayCommand]
+    private Task TranscribeSelectedAsync()
+    {
+        var list = _selection.Count > 0
+            ? _selection.Select(r => r.Entry).ToList()
+            : SelectedRow != null ? new List<SoundEntry> { SelectedRow.Entry } : new List<SoundEntry>();
+        return RunTranscribeAsync(list, "selected", cleanupDecoded: false);
+    }
+
+    [RelayCommand]
+    private Task TranscribeGroupAsync()
+    {
+        var list = RowsInSelectedGroup().Select(r => r.Entry).ToList();
+        string label = _selectedGroup is { IsAll: false } g ? g.Label : "all groups";
+        return RunTranscribeAsync(list, label, cleanupDecoded: true);
+    }
+
+    [RelayCommand]
+    private async Task TranscribeAllAsync()
+    {
+        var list = _allRows.Select(r => r.Entry).ToList();
+        if (list.Count == 0) return;
+        if (ConfirmAsync != null)
+        {
+            var (w, t) = _state.ResolveConcurrency();
+            bool ok = await ConfirmAsync(
+                $"Transcribe all {list.Count:N0} sounds?\n\n" +
+                $"This can take a long time (running {w} workers × {t} threads). " +
+                "Most non-voice clips are skipped automatically, already-done clips are reused, " +
+                "and you can cancel anytime.");
+            if (!ok) return;
+        }
+        await RunTranscribeAsync(list, "all", cleanupDecoded: true);
+    }
+
+    [RelayCommand]
+    private Task TranscribeVoiceBanksAsync()
+        => RunTranscribeAsync(_state.VoiceBankSounds(), "voice banks", cleanupDecoded: true);
+
+    [RelayCommand]
+    private void CancelTranscribe() => _transcribeCts?.Cancel();
+
+    private async Task RunTranscribeAsync(IReadOnlyList<SoundEntry> targets, string label, bool cleanupDecoded)
+    {
+        if (!_state.Whisper.Available)
+        {
+            StatusText = "Speech recognition unavailable — whisper-cli.exe / model missing under tools/whisper.";
+            return;
+        }
+        if (IsTranscribing) { StatusText = "A transcription run is already in progress."; return; }
+        if (targets.Count == 0) { StatusText = $"No sounds to transcribe ({label})."; return; }
+
+        _transcribeCts = new CancellationTokenSource();
+        CancellationToken ct = _transcribeCts.Token;
+        IsTranscribing = true;
+        TranscribeProgress = 0;
+        TranscribeStatus = $"Starting… ({label})";
+        try
+        {
+            var (processed, speech) = await _state.BuildTranscripts(targets, (p, msg) =>
+                Dispatcher.UIThread.Post(() => { TranscribeProgress = p; TranscribeStatus = msg; }),
+                ct, cleanupDecoded);
+
+            // Reflect new transcripts on the visible rows and re-run the filter.
+            foreach (var row in Items)
+                if (_state.TranscriptCache.TryGet(_state.CacheKey(row.Entry), out var c) && !c.NoSpeech)
+                    row.Transcript = c.Text;
+            if (SelectedRow != null
+                && _state.TranscriptCache.TryGet(_state.CacheKey(SelectedRow.Entry), out var sc) && !sc.NoSpeech)
+                SelTranscript = sc.Text;
+            ApplyFilter();
+
+            StatusText = ct.IsCancellationRequested
+                ? $"Transcription cancelled • {processed} done this run ({label}) • cache {_state.TranscriptCache.Count:N0}"
+                : $"Transcribed {processed} • {speech} with speech ({label}) • cache {_state.TranscriptCache.Count:N0}";
+        }
+        catch (Exception ex) { StatusText = "Transcription failed: " + ex.Message; }
+        finally
+        {
+            IsTranscribing = false; TranscribeStatus = "";
+            _transcribeCts?.Dispose(); _transcribeCts = null;
+        }
+    }
+
     private static string NameFor(SoundEntry s)
     {
         string baseName = s.Name ?? s.TagId;
@@ -475,7 +606,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         _flushTimer.Stop();
+        _transcribeCts?.Cancel();
         _state.FlushCache();
+        _state.FlushTranscripts();
         _player.Dispose();
     }
 }
