@@ -27,6 +27,9 @@ tools/whisper/*.zip
 # DeepFilterNet denoiser binary (third-party; fetched, not committed)
 tools/deepfilter/*.exe
 
+# Parakeet / sherpa-onnx CUDA runtime + model (large; downloaded on first enable)
+tools/parakeet/
+
 # Logs
 *.log
 

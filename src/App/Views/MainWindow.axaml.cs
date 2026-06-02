@@ -122,6 +122,8 @@ public partial class MainWindow : Window
             vm.StatusText = "Game folder changed — click “Load sounds” to re-index.";
         if (result.WordlistChanged && vm.IndexLoaded)
             await vm.ApplyWordlistAsync();
+        if (result.ParakeetSelected)
+            await vm.EnsureParakeetAsync();
     }
 
     private void OnSelectionChanged(object? sender, SelectionChangedEventArgs e)

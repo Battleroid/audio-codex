@@ -18,6 +18,7 @@ public sealed class AppConfig
     public string? WordlistFile { get; set; }
     public float Volume { get; set; } = 0.6f;
     public bool DenoiseFallback { get; set; }   // retry borderline transcripts on denoised audio
+    public string Engine { get; set; } = "whisper";   // "whisper" | "parakeet"
     // Transcription concurrency overrides; null/0 = auto-adapt to the machine.
     public int? TranscribeWorkers { get; set; }
     public int? TranscribeThreads { get; set; }
@@ -32,8 +33,29 @@ public sealed class AppState
     public PackageManager? Manager { get; private set; }
     public Vgmstream Vgm { get; }
     public Whisper Whisper { get; }
+    public Parakeet Parakeet { get; private set; }
     public DeepFilter DeepFilter { get; }
+    public bool CudaAvailable { get; }
     public MetaCache MetaCache { get; }
+
+    private static bool DetectCuda()
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "nvidia-smi", Arguments = "-L",
+                UseShellExecute = false, RedirectStandardOutput = true,
+                RedirectStandardError = true, CreateNoWindow = true,
+            };
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p == null) return false;
+            string o = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(3000);
+            return o.Contains("GPU");
+        }
+        catch { return false; }
+    }
     public TranscriptCache TranscriptCache { get; }
     public TranscriptIndex Index { get; } = new();
 
@@ -61,6 +83,11 @@ public sealed class AppState
         string whisperVad = Path.Combine(AppContext.BaseDirectory, "tools", "whisper", "ggml-silero-v5.1.2.bin");
         Whisper = new Whisper(whisperExe, whisperModel, whisperVad);
         DeepFilter = new DeepFilter(Path.Combine(AppContext.BaseDirectory, "tools", "deepfilter", "deep-filter.exe"));
+
+        CudaAvailable = DetectCuda();
+        string sherpaExe = Path.Combine(AppContext.BaseDirectory, "tools", "parakeet", "bin", "sherpa-onnx-offline.exe");
+        string parakeetModel = Path.Combine(AppContext.BaseDirectory, "tools", "parakeet", "model");
+        Parakeet = new Parakeet(sherpaExe, parakeetModel, CudaAvailable);
 
         MetaCache = new MetaCache(Path.Combine(appData, "meta-cache.bin"));
         MetaCache.Load();
@@ -126,6 +153,7 @@ public sealed class AppState
                 root["TranscribeWorkers"] = Config.TranscribeWorkers;
                 root["TranscribeThreads"] = Config.TranscribeThreads;
                 root["DenoiseFallback"] = Config.DenoiseFallback;
+                root["Engine"] = Config.Engine;
 
                 File.WriteAllText(_configPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             }
@@ -327,6 +355,135 @@ public sealed class AppState
         return changed;
     }
 
+    private const string SherpaUrl =
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/sherpa-onnx-v1.13.2-cuda-12.x-cudnn-9.x-win-x64-cuda.tar.bz2";
+    // int8, not fp16: the fp16 TDT model returns empty output under onnxruntime's CUDA provider,
+    // while int8 runs correctly on the GPU (and is half the size).
+    private const string ParakeetModelUrl =
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2";
+
+    // CUDA 12.x runtime that onnxruntime's CUDA provider needs (the sherpa bundle ships only the
+    // onnxruntime dlls, not cuBLAS/cudart/cuFFT/cuRAND/cuDNN). Driver is forward-compatible.
+    private const string CudaRedist = "https://developer.download.nvidia.com/compute/cuda/redist/";
+    private const string CudnnRedist = "https://developer.download.nvidia.com/compute/cudnn/redist/";
+    private static readonly string[] CudaLibZips =
+    {
+        CudaRedist + "libcublas/windows-x86_64/libcublas-windows-x86_64-12.6.4.1-archive.zip",
+        CudaRedist + "cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-12.6.77-archive.zip",
+        CudaRedist + "libcufft/windows-x86_64/libcufft-windows-x86_64-11.3.0.4-archive.zip",
+        CudaRedist + "libcurand/windows-x86_64/libcurand-windows-x86_64-10.3.7.77-archive.zip",
+        CudnnRedist + "cudnn/windows-x86_64/cudnn-windows-x86_64-9.8.0.87_cuda12-archive.zip",
+    };
+
+    /// <summary>Download + extract the sherpa-onnx runtime and the Parakeet model on first enable.</summary>
+    public async Task<bool> EnsureParakeetAsync(Action<double, string> progress, CancellationToken ct)
+    {
+        string root = Path.Combine(AppContext.BaseDirectory, "tools", "parakeet");
+        string binDir = Path.Combine(root, "bin");
+        string modelDir = Path.Combine(root, "model");
+        Directory.CreateDirectory(root);
+
+        if (!File.Exists(Path.Combine(binDir, "sherpa-onnx-offline.exe")))
+        {
+            await FetchTarBz2Async(SherpaUrl, root, "sherpa.tar.bz2", "Downloading speech engine", 0, 0.05, progress, ct);
+            string? ex = Directory.GetDirectories(root, "sherpa-onnx-v*").FirstOrDefault();
+            if (ex != null) { CopyDir(Path.Combine(ex, "bin"), binDir); try { Directory.Delete(ex, true); } catch { } }
+        }
+
+        // GPU runtime: onnxruntime's CUDA provider needs cuBLAS/cudart/cuFFT/cuRAND/cuDNN.
+        if (CudaAvailable && !File.Exists(Path.Combine(binDir, "cublasLt64_12.dll")))
+        {
+            for (int i = 0; i < CudaLibZips.Length; i++)
+                await FetchZipDllsAsync(CudaLibZips[i], binDir, "Downloading GPU runtime",
+                    0.05 + 0.20 * i / CudaLibZips.Length, 0.05 + 0.20 * (i + 1) / CudaLibZips.Length, progress, ct);
+        }
+
+        if (!Directory.Exists(modelDir) || !Directory.EnumerateFiles(modelDir, "encoder*.onnx").Any())
+        {
+            await FetchTarBz2Async(ParakeetModelUrl, root, "model.tar.bz2", "Downloading Parakeet model (~1 GB)", 0.25, 1.0, progress, ct);
+            string? ex = Directory.GetDirectories(root, "sherpa-onnx-nemo-parakeet*").FirstOrDefault();
+            if (ex != null)
+            {
+                Directory.CreateDirectory(modelDir);
+                foreach (string f in Directory.GetFiles(ex)) File.Move(f, Path.Combine(modelDir, Path.GetFileName(f)), true);
+                try { Directory.Delete(ex, true); } catch { }
+            }
+        }
+        Parakeet = new Parakeet(Path.Combine(binDir, "sherpa-onnx-offline.exe"), modelDir, CudaAvailable);
+        progress(1, Parakeet.Available ? $"Parakeet ready ({(Parakeet.UsesCuda ? "GPU" : "CPU")})." : "Parakeet download failed.");
+        return Parakeet.Available;
+    }
+
+    private static async Task FetchTarBz2Async(string url, string dir, string fname, string label,
+        double lo, double hi, Action<double, string> progress, CancellationToken ct)
+    {
+        string archive = Path.Combine(dir, fname);
+        using (var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(40) })
+        using (var resp = await http.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, ct))
+        {
+            resp.EnsureSuccessStatusCode();
+            long? total = resp.Content.Headers.ContentLength;
+            using var src = await resp.Content.ReadAsStreamAsync(ct);
+            using var dst = File.Create(archive);
+            var buf = new byte[1 << 20]; long read = 0; int n;
+            while ((n = await src.ReadAsync(buf, ct)) > 0)
+            {
+                await dst.WriteAsync(buf.AsMemory(0, n), ct);
+                read += n;
+                if (total is long t && t > 0) progress(lo + (hi - lo) * 0.9 * read / t, $"{label}: {read / 1048576}/{t / 1048576} MB");
+            }
+        }
+        progress(lo + (hi - lo) * 0.92, "Extracting…");
+        // Windows' bundled tar (bsdtar) auto-detects bzip2.
+        var psi = new System.Diagnostics.ProcessStartInfo { FileName = "tar", UseShellExecute = false, CreateNoWindow = true };
+        psi.ArgumentList.Add("-xf"); psi.ArgumentList.Add(archive); psi.ArgumentList.Add("-C"); psi.ArgumentList.Add(dir);
+        using (var p = System.Diagnostics.Process.Start(psi)!) await p.WaitForExitAsync(ct);
+        try { File.Delete(archive); } catch { }
+    }
+
+    private static void CopyDir(string from, string to)
+    {
+        Directory.CreateDirectory(to);
+        foreach (string f in Directory.GetFiles(from)) File.Copy(f, Path.Combine(to, Path.GetFileName(f)), true);
+    }
+
+    /// <summary>Download an NVIDIA redist .zip and extract its bin/*.dll into <paramref name="binDir"/>.</summary>
+    private static async Task FetchZipDllsAsync(string url, string binDir, string label,
+        double lo, double hi, Action<double, string> progress, CancellationToken ct)
+    {
+        string tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".zip");
+        using (var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(40) })
+        using (var resp = await http.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, ct))
+        {
+            resp.EnsureSuccessStatusCode();
+            long? total = resp.Content.Headers.ContentLength;
+            using var src = await resp.Content.ReadAsStreamAsync(ct);
+            using var dst = File.Create(tmp);
+            var buf = new byte[1 << 20]; long read = 0; int n;
+            while ((n = await src.ReadAsync(buf, ct)) > 0)
+            {
+                await dst.WriteAsync(buf.AsMemory(0, n), ct);
+                read += n;
+                if (total is long t && t > 0) progress(lo + (hi - lo) * read / t, $"{label}: {read / 1048576} MB");
+            }
+        }
+        try
+        {
+            using var za = System.IO.Compression.ZipFile.OpenRead(tmp);
+            foreach (var e in za.Entries)
+            {
+                string fn = e.FullName.Replace('\\', '/');
+                if (fn.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && fn.Contains("/bin/"))
+                {
+                    using var es = e.Open();
+                    using var fs = File.Create(Path.Combine(binDir, e.Name));
+                    es.CopyTo(fs);
+                }
+            }
+        }
+        finally { try { File.Delete(tmp); } catch { } }
+    }
+
     public Whisper.Result? Transcribe(SoundEntry s, int threads, CancellationToken ct, bool cleanupDecoded = false)
     {
         string key = CacheKey(s);
@@ -337,16 +494,21 @@ public sealed class AppState
                 NoSpeech = cached.NoSpeech, Segments = cached.Segments.ToList(),
             };
 
-        if (Manager == null || !Whisper.Available) return null;
+        if (Manager == null) return null;
+        bool useParakeet = Config.Engine == "parakeet" && Parakeet.Available;
+        if (!useParakeet && !Whisper.Available) return null;
         EnsureCorpus();
 
         string? wav16 = DecodeTo16kMonoWav(s);
         if (wav16 == null) return null;
+
+        // Engine dispatch: Parakeet (sherpa-onnx, GPU) when selected/available, else whisper.cpp.
+        Whisper.Result? Run(string w) => useParakeet
+            ? Parakeet.Transcribe(w, threads, ct)
+            : Whisper.Transcribe(w, threads, ct, WhisperPrompt, useVad: false);
         try
         {
-            // VAD is bundled but off by default: testing showed it drops ~38% of real speech
-            // (it kills hallucinations too, but losing genuine short lines is worse for our purpose).
-            Whisper.Result? r = Whisper.Transcribe(wav16, threads, ct, WhisperPrompt, useVad: false);
+            Whisper.Result? r = Run(wav16);
             if (r != null)
             {
                 string rawText = r.Text;
@@ -364,7 +526,7 @@ public sealed class AppState
                     string? dn16 = dnFull != null ? Resample16kMono(dnFull) : null;
                     if (dn16 != null)
                     {
-                        var r2 = Whisper.Transcribe(dn16, threads, ct, WhisperPrompt, useVad: false);
+                        var r2 = Run(dn16);
                         try { File.Delete(dn16); } catch { }
                         try { File.Delete(dnFull!); } catch { }
                         if (r2 is { NoSpeech: false } && Corpus!.Correct(r2.Text, 0.2) is { } m2 && m2.score > mm.score)

@@ -11,6 +11,7 @@ public sealed class SettingsResult
 {
     public bool GameDirChanged;
     public bool WordlistChanged;
+    public bool ParakeetSelected;   // user switched to Parakeet (may need a download)
 }
 
 public partial class SettingsWindow : Window
@@ -18,6 +19,7 @@ public partial class SettingsWindow : Window
     private readonly AppState _state = AppState.Instance;
     private readonly string? _origGameDir;
     private readonly string? _origWordlist;
+    private string _origEngine = "whisper";
 
     public SettingsWindow()
     {
@@ -28,6 +30,13 @@ public partial class SettingsWindow : Window
         WorkersBox.Text = _state.Config.TranscribeWorkers?.ToString() ?? "";
         ThreadsBox.Text = _state.Config.TranscribeThreads?.ToString() ?? "";
         DenoiseBox.IsChecked = _state.Config.DenoiseFallback;
+
+        EnginePanel.IsVisible = _state.CudaAvailable;
+        EngineBox.SelectedIndex = _state.Config.Engine == "parakeet" ? 1 : 0;
+        EngineHint.Text = _state.Parakeet.Available
+            ? $"Parakeet installed (running on {(_state.Parakeet.UsesCuda ? "GPU" : "CPU")})."
+            : "Parakeet downloads on first use; runs on GPU when the CUDA cuBLAS runtime is present, otherwise CPU.";
+        _origEngine = _state.Config.Engine;
         _origGameDir = _state.Config.GameDir;
         _origWordlist = _state.Config.WordlistFile;
 
@@ -81,12 +90,15 @@ public partial class SettingsWindow : Window
         int? threads = int.TryParse((ThreadsBox.Text ?? "").Trim(), out int tv) && tv > 0 ? tv : null;
         _state.SetTranscribeConcurrency(workers, threads);
         _state.Config.DenoiseFallback = DenoiseBox.IsChecked == true;
+        string engine = EngineBox.SelectedIndex == 1 ? "parakeet" : "whisper";
+        _state.Config.Engine = engine;
         _state.Save();
 
         Close(new SettingsResult
         {
             GameDirChanged = !string.Equals(_origGameDir ?? "", game),
             WordlistChanged = !string.Equals(_origWordlist ?? "", wordlist),
+            ParakeetSelected = engine == "parakeet" && (engine != _origEngine || !_state.Parakeet.Available),
         });
     }
 }

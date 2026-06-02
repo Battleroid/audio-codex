@@ -597,6 +597,28 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private void CancelTranscribe() => _transcribeCts?.Cancel();
 
+    /// <summary>Download + set up the Parakeet engine on first selection.</summary>
+    public async Task EnsureParakeetAsync()
+    {
+        if (_state.Parakeet.Available)
+        {
+            StatusText = $"Parakeet ready ({(_state.Parakeet.UsesCuda ? "GPU" : "CPU")}).";
+            return;
+        }
+        if (IsTranscribing) { StatusText = "A run is already in progress."; return; }
+        IsTranscribing = true; TranscribeProgress = 0; TranscribeStatus = "Setting up Parakeet…";
+        try
+        {
+            using var cts = new CancellationTokenSource();
+            bool ok = await _state.EnsureParakeetAsync(
+                (p, m) => Dispatcher.UIThread.Post(() => { TranscribeProgress = p; TranscribeStatus = m; }), cts.Token);
+            StatusText = ok ? $"Parakeet ready ({(_state.Parakeet.UsesCuda ? "GPU" : "CPU")})."
+                            : "Parakeet setup failed (check connection).";
+        }
+        catch (Exception ex) { StatusText = "Parakeet setup failed: " + ex.Message; }
+        finally { IsTranscribing = false; TranscribeStatus = ""; }
+    }
+
     /// <summary>Re-snap every cached transcript to the nearest canonical in-game line.</summary>
     [RelayCommand]
     private async Task RecorrectTranscriptsAsync()

@@ -67,6 +67,14 @@
 
         <StackPanel Spacing="4">
             <TextBlock Classes="h" Text="TRANSCRIPTION (SPEECH-TO-TEXT)"/>
+            <StackPanel Name="EnginePanel" Spacing="3" Margin="0,0,0,8" IsVisible="False">
+                <TextBlock Classes="hint" Margin="0" Text="Engine"/>
+                <ComboBox Name="EngineBox" HorizontalAlignment="Stretch">
+                    <ComboBoxItem>Whisper (base.en, bundled)</ComboBoxItem>
+                    <ComboBoxItem>Parakeet v2 (NVIDIA, downloads ~1.3 GB)</ComboBoxItem>
+                </ComboBox>
+                <TextBlock Name="EngineHint" Classes="hint" Margin="0"/>
+            </StackPanel>
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                 <StackPanel Grid.Column="0" Spacing="3">
                     <TextBlock Classes="hint" Margin="0" Text="Parallel workers (blank = auto)"/>
