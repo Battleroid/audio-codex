@@ -10,7 +10,8 @@ param(
     [string]$Notes,
     [string]$NotesFile,
     [switch]$Publish,
-    [switch]$Draft
+    [switch]$Draft,
+    [switch]$WithParakeet
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -25,7 +26,8 @@ if (-not (Test-Path $whisper) -or -not (Test-Path $model)) {
 }
 
 # 2) build the self-contained app
-& (Join-Path $PSScriptRoot "publish.ps1")
+if ($WithParakeet) { & (Join-Path $PSScriptRoot "publish.ps1") -WithParakeet }
+else               { & (Join-Path $PSScriptRoot "publish.ps1") }
 
 # 3) zip it
 $zip = Join-Path $root ("audio-codex-{0}-win-x64.zip" -f $Version)
