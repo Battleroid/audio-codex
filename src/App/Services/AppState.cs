@@ -56,7 +56,8 @@ public sealed class AppState
 
         string whisperExe = Path.Combine(AppContext.BaseDirectory, "tools", "whisper", "whisper-cli.exe");
         string whisperModel = Path.Combine(AppContext.BaseDirectory, "tools", "whisper", "ggml-base.en.bin");
-        Whisper = new Whisper(whisperExe, whisperModel);
+        string whisperVad = Path.Combine(AppContext.BaseDirectory, "tools", "whisper", "ggml-silero-v5.1.2.bin");
+        Whisper = new Whisper(whisperExe, whisperModel, whisperVad);
 
         MetaCache = new MetaCache(Path.Combine(appData, "meta-cache.bin"));
         MetaCache.Load();
@@ -267,6 +268,11 @@ public sealed class AppState
     /// <summary>Transcribe a single sound, cache-first (like <see cref="GetPreview"/>). When
     /// <paramref name="cleanupDecoded"/> is set the cached playback WAV is removed afterwards
     /// (used by big batches to bound temp-disk growth).</summary>
+    // Light domain prime so whisper expects terse comms/AI-announcement register and key terms.
+    private const string WhisperPrompt =
+        "UESC mission comms: terse AI announcements and callouts. " +
+        "Terms include exfil, compiler, husk, runner, cryo, signal detected.";
+
     public Whisper.Result? Transcribe(SoundEntry s, int threads, CancellationToken ct, bool cleanupDecoded = false)
     {
         string key = CacheKey(s);
@@ -283,7 +289,9 @@ public sealed class AppState
         if (wav16 == null) return null;
         try
         {
-            Whisper.Result? r = Whisper.Transcribe(wav16, threads, ct);
+            // VAD is bundled but off by default: testing showed it drops ~38% of real speech
+            // (it kills hallucinations too, but losing genuine short lines is worse for our purpose).
+            Whisper.Result? r = Whisper.Transcribe(wav16, threads, ct, WhisperPrompt, useVad: false);
             if (r != null)
                 TranscriptCache.Set(key, new CachedTranscript
                 {

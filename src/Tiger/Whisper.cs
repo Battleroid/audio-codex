@@ -23,11 +23,18 @@ public sealed class Whisper
 {
     private readonly string _exe;
     private readonly string _model;
+    private readonly string? _vadModel;
 
-    public Whisper(string exePath, string modelPath) { _exe = exePath; _model = modelPath; }
+    public Whisper(string exePath, string modelPath, string? vadModelPath = null)
+    {
+        _exe = exePath; _model = modelPath; _vadModel = vadModelPath;
+    }
 
     /// <summary>True only when both the executable and the model file are present.</summary>
     public bool Available => File.Exists(_exe) && File.Exists(_model);
+
+    /// <summary>Silero VAD model is bundled — enables speech gating to cut SFX/silence.</summary>
+    public bool VadAvailable => !string.IsNullOrEmpty(_vadModel) && File.Exists(_vadModel);
 
     public sealed class Result
     {
@@ -39,7 +46,7 @@ public sealed class Whisper
 
     /// <summary>Transcribe a 16 kHz mono WAV. <paramref name="wav16kPath"/> MUST already be
     /// 16 kHz mono 16-bit PCM — whisper-cli does not resample. Returns null on failure/cancel.</summary>
-    public Result? Transcribe(string wav16kPath, int threads, CancellationToken ct)
+    public Result? Transcribe(string wav16kPath, int threads, CancellationToken ct, string? prompt = null, bool useVad = true)
     {
         if (!Available || ct.IsCancellationRequested) return null;
 
@@ -60,6 +67,22 @@ public sealed class Whisper
         psi.ArgumentList.Add("-l"); psi.ArgumentList.Add("en");
         psi.ArgumentList.Add("-oj");                       // write a JSON sidecar
         psi.ArgumentList.Add("-of"); psi.ArgumentList.Add(baseOut);
+        // Accuracy/robustness tuning for short, independent, effected game lines:
+        psi.ArgumentList.Add("-mc"); psi.ArgumentList.Add("0");   // no cross-segment context (kills carryover hallucination)
+        psi.ArgumentList.Add("-sns");                             // suppress non-speech tokens
+        psi.ArgumentList.Add("-bs"); psi.ArgumentList.Add("5");   // beam search
+        psi.ArgumentList.Add("-bo"); psi.ArgumentList.Add("5");
+        if (useVad && VadAvailable)                               // Silero VAD: gate out SFX/silence
+        {
+            psi.ArgumentList.Add("--vad");
+            psi.ArgumentList.Add("-vm"); psi.ArgumentList.Add(_vadModel!);
+            psi.ArgumentList.Add("-vt"); psi.ArgumentList.Add("0.35");  // low threshold so effected speech isn't dropped
+            psi.ArgumentList.Add("-vp"); psi.ArgumentList.Add("80");    // pad so onsets aren't clipped
+        }
+        if (!string.IsNullOrWhiteSpace(prompt))
+        {
+            psi.ArgumentList.Add("--prompt"); psi.ArgumentList.Add(prompt);
+        }
         psi.ArgumentList.Add("-f"); psi.ArgumentList.Add(wav16kPath);
 
         try
