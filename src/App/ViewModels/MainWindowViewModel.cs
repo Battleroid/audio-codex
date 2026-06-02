@@ -84,6 +84,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private bool _isTranscribing;
     [ObservableProperty] private double _transcribeProgress;
     [ObservableProperty] private string _transcribeStatus = "";
+    [ObservableProperty] private string _speechCountText = "";
+    public bool HasSpeechCount => !string.IsNullOrEmpty(SpeechCountText);
+    partial void OnSpeechCountTextChanged(string value) => OnPropertyChanged(nameof(HasSpeechCount));
+
+    /// <summary>Count of catalogued sounds that have a non-silent transcript.</summary>
+    public void UpdateSpeechCount()
+    {
+        if (!WhisperAvailable || _allRows.Count == 0) { SpeechCountText = ""; return; }
+        int n = _allRows.Count(r => _state.TranscriptCache.TryGet(_state.CacheKey(r.Entry), out var tc) && !tc.NoSpeech);
+        SpeechCountText = n > 0 ? $"{n:N0} voiced" : "";
+    }
     private bool _fuzzyTranscriptSearch;
     public bool FuzzyTranscriptSearch
     {
@@ -194,6 +205,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             RebuildGroups();
             ApplyFilter();
             _state.BuildTranscriptIndex();   // make any previously-cached transcripts searchable
+            UpdateSpeechCount();
             IndexLoaded = true;
             string names = _state.Manager.Names.WordlistCount > 0
                 ? $" • wordlist: {_state.Manager.Names.WordlistCount}" : "";
@@ -603,6 +615,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 && _state.TranscriptCache.TryGet(_state.CacheKey(SelectedRow.Entry), out var sc) && !sc.NoSpeech)
                 SelTranscript = sc.Text;
             ApplyFilter();
+            UpdateSpeechCount();
 
             StatusText = ct.IsCancellationRequested
                 ? $"Transcription cancelled • {processed} done this run ({label}) • cache {_state.TranscriptCache.Count:N0}"
