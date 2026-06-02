@@ -484,10 +484,10 @@ public sealed class AppState
         finally { try { File.Delete(tmp); } catch { } }
     }
 
-    public Whisper.Result? Transcribe(SoundEntry s, int threads, CancellationToken ct, bool cleanupDecoded = false)
+    public Whisper.Result? Transcribe(SoundEntry s, int threads, CancellationToken ct, bool cleanupDecoded = false, bool force = false)
     {
         string key = CacheKey(s);
-        if (TranscriptCache.TryGet(key, out var cached))
+        if (!force && TranscriptCache.TryGet(key, out var cached))
             return new Whisper.Result
             {
                 Text = cached.Text, Language = cached.Language,
@@ -564,10 +564,13 @@ public sealed class AppState
         CancellationToken ct,
         bool cleanupDecoded = true,
         int workers = 0,
-        int threadsPerWorker = 0)
+        int threadsPerWorker = 0,
+        bool force = false)
     {
         var (w, t) = ResolveConcurrency(workers, threadsPerWorker);
-        var todo = targets.Where(s => !TranscriptCache.TryGet(CacheKey(s), out _)).ToList();
+        // force => re-transcribe everything (e.g. user switched engines); otherwise skip cached.
+        var todo = force ? targets.ToList()
+                         : targets.Where(s => !TranscriptCache.TryGet(CacheKey(s), out _)).ToList();
         int total = todo.Count;
         if (total == 0)
         {
@@ -586,7 +589,7 @@ public sealed class AppState
         {
             await Parallel.ForEachAsync(todo, opts, (s, token) =>
             {
-                Whisper.Result? r = Transcribe(s, t, token, cleanupDecoded);
+                Whisper.Result? r = Transcribe(s, t, token, cleanupDecoded, force);
                 int d = Interlocked.Increment(ref done);
                 if (r is { NoSpeech: false, Text.Length: > 0 }) Interlocked.Increment(ref speech);
                 if (Interlocked.Increment(ref sinceFlush) >= 50)

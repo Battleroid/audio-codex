@@ -573,8 +573,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             bool ok = await ConfirmAsync(
                 $"Transcribe all {list.Count:N0} sounds?\n\n" +
                 $"This can take a long time (running {w} workers × {t} threads). " +
-                "Most non-voice clips are skipped automatically, already-done clips are reused, " +
-                "and you can cancel anytime.");
+                "Most non-voice clips are skipped automatically, and you can cancel anytime.");
             if (!ok) return;
         }
         await RunTranscribeAsync(list, "all", cleanupDecoded: true);
@@ -653,6 +652,28 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (IsTranscribing) { StatusText = "A transcription run is already in progress."; return; }
         if (targets.Count == 0) { StatusText = $"No sounds to transcribe ({label})."; return; }
 
+        // If some targets are already transcribed, offer to redo them (e.g. after switching engines).
+        // Otherwise we keep the default behaviour: skip cached, transcribe only what's new.
+        bool force = false;
+        int already = targets.Count(s => _state.TranscriptCache.TryGet(_state.CacheKey(s), out _));
+        if (already > 0 && ConfirmAsync != null)
+        {
+            string engine = _state.Config.Engine == "parakeet" && _state.Parakeet.Available ? "Parakeet" : "Whisper";
+            string scope = targets.Count == 1
+                ? $"This sound is already transcribed. Re-transcribe it with {engine}?"
+                : already == targets.Count
+                    ? $"All {already:N0} of these sounds are already transcribed. Re-transcribe them with {engine}?"
+                    : $"{already:N0} of {targets.Count:N0} sounds ({label}) are already transcribed.\n\n" +
+                      $"Choose Transcribe to redo everything with {engine}, or Cancel to do only the {targets.Count - already:N0} remaining.";
+            force = await ConfirmAsync(scope);
+            // Nothing new and the user declined to redo -> there's no work to do.
+            if (!force && already == targets.Count)
+            {
+                StatusText = $"Already transcribed ({label}) — nothing to do.";
+                return;
+            }
+        }
+
         _transcribeCts = new CancellationTokenSource();
         CancellationToken ct = _transcribeCts.Token;
         IsTranscribing = true;
@@ -662,7 +683,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             var (processed, speech) = await _state.BuildTranscripts(targets, (p, msg) =>
                 Dispatcher.UIThread.Post(() => { TranscribeProgress = p; TranscribeStatus = msg; }),
-                ct, cleanupDecoded);
+                ct, cleanupDecoded, force: force);
 
             // Reflect new transcripts on the visible rows and re-run the filter.
             foreach (var row in Items)
