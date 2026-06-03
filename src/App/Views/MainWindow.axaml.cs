@@ -67,11 +67,18 @@ public partial class MainWindow : Window
     {
         var yes = new Button
         {
-            Content = "Transcribe", Width = 120, Background = Avalonia.Media.Brush.Parse("#c8f000"),
-            Foreground = Avalonia.Media.Brush.Parse("#0b0b0c"), BorderThickness = new Avalonia.Thickness(0),
+            Content = "Transcribe", Width = 120,
             HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
         };
-        var no = new Button { Content = "Cancel", Width = 100 };
+        // Accent (filled) primary; dark outlined secondary. Set the Fluent theme's per-state
+        // resource keys so the colours hold on hover/press instead of reverting to defaults.
+        ThemeButton(yes, bg: "#c8f000", fg: "#0b0b0c", over: "#d6ff2e", pressed: "#a6c800", border: "#c8f000");
+        var no = new Button
+        {
+            Content = "Cancel", Width = 100,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+        };
+        ThemeButton(no, bg: "#1f1f24", fg: "#e8e8e6", over: "#2a2a30", pressed: "#161618", border: "#48484f");
         var buttons = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
@@ -99,6 +106,18 @@ public partial class MainWindow : Window
         yes.Click += (_, _) => dlg.Close(true);
         no.Click += (_, _) => dlg.Close(false);
         return await dlg.ShowDialog<bool>(this);
+    }
+
+    /// <summary>Pin a button's colours across rest/hover/press by overriding the Fluent theme's
+    /// per-state resource keys (setting Background/Foreground alone gets overridden on hover).</summary>
+    private static void ThemeButton(Button b, string bg, string fg, string over, string pressed, string border)
+    {
+        void Set(string key, string color) => b.Resources[key] = Avalonia.Media.Brush.Parse(color);
+        Set("ButtonBackground", bg);   Set("ButtonBackgroundPointerOver", over); Set("ButtonBackgroundPressed", pressed); Set("ButtonBackgroundDisabled", bg);
+        Set("ButtonForeground", fg);   Set("ButtonForegroundPointerOver", fg);   Set("ButtonForegroundPressed", fg);     Set("ButtonForegroundDisabled", fg);
+        Set("ButtonBorderBrush", border); Set("ButtonBorderBrushPointerOver", border); Set("ButtonBorderBrushPressed", border);
+        b.BorderThickness = new Avalonia.Thickness(1);
+        b.CornerRadius = new Avalonia.CornerRadius(0);
     }
 
     private async Task<string?> PickFolderAsync()
