@@ -617,7 +617,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <summary>Download + set up the Parakeet engine on first selection.</summary>
     public async Task EnsureParakeetAsync()
     {
-        if (_state.Parakeet.Available)
+        // Fully ready only when Parakeet is available AND we're not stuck on an incomplete GPU
+        // runtime: a machine with a CUDA GPU that isn't actually using CUDA means the runtime
+        // DLLs are partial, so fall through to re-run setup and fetch the missing ones.
+        bool gpuIncomplete = _state.CudaAvailable && !_state.Parakeet.UsesCuda;
+        if (_state.Parakeet.Available && !gpuIncomplete)
         {
             RefreshTranscriptionAvailability();
             StatusText = $"Parakeet ready ({(_state.Parakeet.UsesCuda ? "GPU" : "CPU")}).";

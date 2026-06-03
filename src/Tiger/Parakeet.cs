@@ -16,22 +16,31 @@ public sealed class Parakeet
     private readonly string _modelDir;
     private readonly bool _cuda;
 
+    // onnxruntime's CUDA provider needs the whole set, not just cuBLAS; an interrupted setup (or a
+    // PATH exposing only cuBLAS) must NOT enable --provider=cuda or transcription fails outright.
+    private static readonly string[] RequiredCudaDlls =
+    {
+        "cublasLt64_12.dll", "cudart64_12.dll", "cufft64_11.dll", "curand64_10.dll", "cudnn64_9.dll",
+    };
+
     public Parakeet(string exePath, string modelDir, bool preferCuda)
     {
         _exe = exePath; _modelDir = modelDir;
-        // CUDA needs cuBLAS (cublasLt64_12.dll) which the sherpa-onnx bundle omits; use the GPU
-        // only when that runtime is actually resolvable, otherwise fall back to (fast) CPU.
-        _cuda = preferCuda && CublasPresent(Path.GetDirectoryName(exePath));
+        // Use the GPU only when the full CUDA runtime is resolvable, otherwise fall back to (fast) CPU.
+        _cuda = preferCuda && CudaRuntimePresent(Path.GetDirectoryName(exePath));
     }
 
     public bool UsesCuda => _cuda;
 
-    private static bool CublasPresent(string? binDir)
+    private static bool CudaRuntimePresent(string? binDir) =>
+        RequiredCudaDlls.All(dll => DllFindable(dll, binDir));
+
+    private static bool DllFindable(string dll, string? binDir)
     {
-        if (binDir != null && File.Exists(Path.Combine(binDir, "cublasLt64_12.dll"))) return true;
+        if (binDir != null && File.Exists(Path.Combine(binDir, dll))) return true;
         foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
         {
-            try { if (File.Exists(Path.Combine(dir.Trim(), "cublasLt64_12.dll"))) return true; }
+            try { if (File.Exists(Path.Combine(dir.Trim(), dll))) return true; }
             catch { }
         }
         return false;
