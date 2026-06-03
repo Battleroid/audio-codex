@@ -598,7 +598,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task TranscribeVoiceBanksAsync()
     {
-        if (!_state.Whisper.Available)
+        // Only require Whisper when it's the active engine — Parakeet can transcribe on its own.
+        bool useParakeet = _state.Config.Engine == "parakeet" && _state.Parakeet.Available;
+        if (!useParakeet && !_state.Whisper.Available)
         {
             StatusText = "Speech recognition unavailable — whisper-cli.exe / model missing under tools/whisper.";
             return;

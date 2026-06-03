@@ -147,7 +147,7 @@
                     <Border Padding="8,4" Background="#161618" IsVisible="{Binding !VgmAvailable}">
                         <TextBlock Text="vgmstream not found" Foreground="#c8f000" FontSize="11"/>
                     </Border>
-                    <Border Padding="8,4" Background="#161618" IsVisible="{Binding !WhisperAvailable}">
+                    <Border Padding="8,4" Background="#161618" IsVisible="{Binding !TranscriptionAvailable}">
                         <TextBlock Text="whisper not found" Foreground="#c8f000" FontSize="11"/>
                     </Border>
                 </StackPanel>
@@ -227,10 +227,10 @@
                             <CheckBox IsChecked="{Binding HideEmpty, Mode=TwoWay}"
                                       Foreground="#9b9ba3" FontSize="11" Content="hide empty"/>
                             <CheckBox IsChecked="{Binding SpeechOnly, Mode=TwoWay}"
-                                      IsVisible="{Binding WhisperAvailable}"
+                                      IsVisible="{Binding TranscriptionAvailable}"
                                       Foreground="#9b9ba3" FontSize="11" Content="speech only"/>
                             <CheckBox IsChecked="{Binding FuzzyTranscriptSearch, Mode=TwoWay}"
-                                      IsVisible="{Binding WhisperAvailable}"
+                                      IsVisible="{Binding TranscriptionAvailable}"
                                       Foreground="#9b9ba3" FontSize="11" Content="≈ similar words"/>
                         </StackPanel>
                         <TextBlock Grid.Column="1" Text="{Binding ResultCountText}" Classes="k"
@@ -351,7 +351,7 @@
                         </StackPanel>
 
                         <!-- transcript -->
-                        <StackPanel Spacing="8" IsVisible="{Binding WhisperAvailable}">
+                        <StackPanel Spacing="8" IsVisible="{Binding TranscriptionAvailable}">
                             <Grid ColumnDefinitions="Auto,Auto,*,Auto">
                                 <TextBlock Grid.Column="0" Text="TRANSCRIPT" Classes="k" VerticalAlignment="Center"/>
                                 <TextBlock Grid.Column="1" Text="◆ in-game text" Foreground="#c8f000" FontSize="10"
