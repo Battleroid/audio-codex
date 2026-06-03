@@ -147,7 +147,7 @@
                     <Border Padding="8,4" Background="#161618" IsVisible="{Binding !VgmAvailable}">
                         <TextBlock Text="vgmstream not found" Foreground="#c8f000" FontSize="11"/>
                     </Border>
-                    <Border Padding="8,4" Background="#161618" IsVisible="{Binding !TranscriptionAvailable}">
+                    <Border Padding="8,4" Background="#161618" IsVisible="{Binding !EngineAvailable}">
                         <TextBlock Text="whisper not found" Foreground="#c8f000" FontSize="11"/>
                     </Border>
                 </StackPanel>

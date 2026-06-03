@@ -540,6 +540,7 @@ public sealed class AppState
         if (Manager == null) return null;
         bool useParakeet = Config.Engine == "parakeet" && Parakeet.Available;
         if (!useParakeet && !Whisper.Available) return null;
+        if (!Vgm.Available) return null;   // every transcript needs vgmstream to produce the WAV
         EnsureCorpus();
 
         // Per-entry decode (not the shared {TagId}.wav cache) so same-TagId entries don't collide

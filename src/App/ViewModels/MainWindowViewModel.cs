@@ -83,16 +83,25 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     // ---- transcription ----
     [ObservableProperty] private bool _whisperAvailable;
 
-    /// <summary>True when *some* engine can transcribe: Whisper, or Parakeet when it is the
-    /// selected and installed engine. Drives the Transcribe menu + speech count so a
-    /// Parakeet-only install (no tools/whisper) is still usable.</summary>
-    public bool TranscriptionAvailable =>
+    /// <summary>True when *some* ASR engine is usable: Whisper, or Parakeet when it is the
+    /// selected and installed engine. (Independent of the decoder — drives the engine warning.)</summary>
+    public bool EngineAvailable =>
         WhisperAvailable || (_state.Config.Engine == "parakeet" && _state.Parakeet.Available);
-    partial void OnWhisperAvailableChanged(bool value) => OnPropertyChanged(nameof(TranscriptionAvailable));
+
+    /// <summary>True when transcription can actually run: an engine *and* the WEM decoder
+    /// (vgmstream), which every transcript needs to produce its WAV input. Drives the Transcribe
+    /// menu + speech count, so a Parakeet-only install is usable while a missing decoder disables it.</summary>
+    public bool TranscriptionAvailable => EngineAvailable && _state.Vgm.Available;
+    partial void OnWhisperAvailableChanged(bool value)
+    {
+        OnPropertyChanged(nameof(EngineAvailable));
+        OnPropertyChanged(nameof(TranscriptionAvailable));
+    }
 
     /// <summary>Recompute engine availability (after Settings closes or Parakeet finishes setup).</summary>
     public void RefreshTranscriptionAvailability()
     {
+        OnPropertyChanged(nameof(EngineAvailable));
         OnPropertyChanged(nameof(TranscriptionAvailable));
         UpdateSpeechCount();
     }
@@ -605,6 +614,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             StatusText = "Speech recognition unavailable — whisper-cli.exe / model missing under tools/whisper.";
             return;
         }
+        if (!_state.Vgm.Available)
+        {
+            StatusText = "Audio decoder unavailable — vgmstream-cli.exe missing under tools/vgmstream.";
+            return;
+        }
         // Voice banks are identified by soundbank name, which is only resolved once soundbanks
         // are built — make sure that has happened before resolving the preset.
         await EnsureSoundbanksBuiltAsync();
@@ -666,6 +680,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (SelectedRow != null
                 && _state.TranscriptCache.TryGet(_state.CacheKey(SelectedRow.Entry), out var sc) && !sc.NoSpeech)
             { SelTranscript = sc.Text; SelTranscriptCorrected = sc.Corrected; }
+            // Correction changed the transcript text, so rebuild the search index — otherwise the
+            // "≈ similar words" fuzzy branch keeps matching against the pre-correction vocabulary.
+            _state.BuildTranscriptIndex();
             ApplyFilter(); UpdateSpeechCount();
             StatusText = $"Re-corrected {changed:N0} transcripts against the in-game text corpus.";
         }
@@ -680,6 +697,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (!useParakeet && !_state.Whisper.Available)
         {
             StatusText = "Speech recognition unavailable — whisper-cli.exe / model missing under tools/whisper.";
+            return;
+        }
+        if (!_state.Vgm.Available)
+        {
+            StatusText = "Audio decoder unavailable — vgmstream-cli.exe missing under tools/vgmstream.";
             return;
         }
         if (IsTranscribing) { StatusText = "A transcription run is already in progress."; return; }

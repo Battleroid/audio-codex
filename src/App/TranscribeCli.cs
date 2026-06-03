@@ -26,6 +26,11 @@ public static class TranscribeCli
             Console.WriteLine("(or select the Parakeet engine and install its runtime/model)");
             return;
         }
+        if (!state.Vgm.Available)
+        {
+            Console.WriteLine("ABORT: vgmstream-cli.exe missing under tools/vgmstream — cannot decode audio");
+            return;
+        }
 
         var mgr = state.BuildIndex((p, msg) => { });
         Console.WriteLine($"Indexed {mgr.Sounds.Count} sounds / {mgr.PackageCount} packages");
