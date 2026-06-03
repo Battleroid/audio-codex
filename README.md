@@ -8,7 +8,7 @@ It reads the game's Tiger Engine `.pkg` packages directly (AES‑128‑GCM decry
 Oodle/Kraken decompression), finds every Wwise audio file, and lets you play it,
 view a waveform, inspect metadata, and export to WAV — individually or in bulk.
 
-![overview](docs/overview.png)
+![Audio Codex](docs/preview.png)
 
 ## Features
 
