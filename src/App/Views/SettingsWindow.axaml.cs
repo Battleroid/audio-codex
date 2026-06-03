@@ -31,11 +31,15 @@ public partial class SettingsWindow : Window
         ThreadsBox.Text = _state.Config.TranscribeThreads?.ToString() ?? "";
         DenoiseBox.IsChecked = _state.Config.DenoiseFallback;
 
-        EnginePanel.IsVisible = _state.CudaAvailable;
+        // Always expose the engine selector: Whisper is CPU, and Parakeet has a CPU fallback
+        // (--provider=cpu) so it's usable without a GPU too — only the messaging is GPU-aware.
+        EnginePanel.IsVisible = true;
         EngineBox.SelectedIndex = _state.Config.Engine == "parakeet" ? 1 : 0;
         EngineHint.Text = _state.Parakeet.Available
             ? $"Parakeet installed (running on {(_state.Parakeet.UsesCuda ? "GPU" : "CPU")})."
-            : "Parakeet downloads on first use; runs on GPU when the CUDA cuBLAS runtime is present, otherwise CPU.";
+            : _state.CudaAvailable
+                ? "Parakeet downloads on first use; runs on GPU when the CUDA cuBLAS runtime is present, otherwise CPU."
+                : "Parakeet downloads on first use; no CUDA GPU detected, so it will run on CPU.";
         _origEngine = _state.Config.Engine;
         _origGameDir = _state.Config.GameDir;
         _origWordlist = _state.Config.WordlistFile;
