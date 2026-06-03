@@ -22,7 +22,14 @@ $CudaZips  = @(
 
 function Ensure-Parakeet($pk) {
   $bin = Join-Path $pk "bin"; $model = Join-Path $pk "model"
-  $haveBin   = (Test-Path (Join-Path $bin "sherpa-onnx-offline.exe")) -and (Test-Path (Join-Path $bin "cublasLt64_12.dll"))
+  # Each CUDA redist zip paired with a marker DLL it must produce, so an interrupted bundle can
+  # resume by fetching only the libs still missing instead of trusting cublas alone.
+  $cudaMarkers = @{
+    "cublasLt64_12.dll" = $CudaZips[0]; "cudart64_12.dll" = $CudaZips[1]; "cufft64_11.dll" = $CudaZips[2]
+    "curand64_10.dll"   = $CudaZips[3]; "cudnn64_9.dll"   = $CudaZips[4]
+  }
+  $missingCuda = @($cudaMarkers.Keys | Where-Object { -not (Test-Path (Join-Path $bin $_)) })
+  $haveBin   = (Test-Path (Join-Path $bin "sherpa-onnx-offline.exe")) -and ($missingCuda.Count -eq 0)
   $haveModel = Test-Path (Join-Path $model "encoder.int8.onnx")
   if ($haveBin -and $haveModel) { Write-Host "Parakeet runtime + model already present (reusing)." -ForegroundColor Green; return }
 
@@ -37,16 +44,17 @@ function Ensure-Parakeet($pk) {
       $ex = Get-ChildItem $tmp -Directory -Filter "sherpa-onnx-v*" | Select-Object -First 1
       Copy-Item (Join-Path $ex.FullName "bin\*") $bin -Force; Remove-Item $a -Force
     }
-    if (-not (Test-Path (Join-Path $bin "cublasLt64_12.dll"))) {
-      foreach ($u in $CudaZips) {
-        Write-Host "Downloading $(Split-Path $u -Leaf)..." -ForegroundColor Cyan
-        $z = Join-Path $tmp "lib.zip"; curl.exe -sL -o $z $u
-        $ez = Join-Path $tmp "ez"; if (Test-Path $ez) { Remove-Item $ez -Recurse -Force }
-        Expand-Archive $z -DestinationPath $ez -Force
-        Get-ChildItem $ez -Recurse -Filter *.dll | Where-Object { $_.FullName -match '\\bin\\' } |
-          ForEach-Object { Copy-Item $_.FullName $bin -Force }
-        Remove-Item $z, $ez -Recurse -Force
-      }
+    # Re-check after the sherpa copy (it may already ship some CUDA libs), then fetch only what's missing.
+    $missingCuda = @($cudaMarkers.Keys | Where-Object { -not (Test-Path (Join-Path $bin $_)) })
+    foreach ($marker in $missingCuda) {
+      $u = $cudaMarkers[$marker]
+      Write-Host "Downloading $(Split-Path $u -Leaf) (for $marker)..." -ForegroundColor Cyan
+      $z = Join-Path $tmp "lib.zip"; curl.exe -sL -o $z $u
+      $ez = Join-Path $tmp "ez"; if (Test-Path $ez) { Remove-Item $ez -Recurse -Force }
+      Expand-Archive $z -DestinationPath $ez -Force
+      Get-ChildItem $ez -Recurse -Filter *.dll | Where-Object { $_.FullName -match '\\bin\\' } |
+        ForEach-Object { Copy-Item $_.FullName $bin -Force }
+      Remove-Item $z, $ez -Recurse -Force
     }
     if (-not (Test-Path (Join-Path $model "encoder.int8.onnx"))) {
       Write-Host "Downloading Parakeet int8 model..." -ForegroundColor Cyan

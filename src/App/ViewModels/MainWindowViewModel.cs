@@ -82,6 +82,21 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     // ---- transcription ----
     [ObservableProperty] private bool _whisperAvailable;
+
+    /// <summary>True when *some* engine can transcribe: Whisper, or Parakeet when it is the
+    /// selected and installed engine. Drives the Transcribe menu + speech count so a
+    /// Parakeet-only install (no tools/whisper) is still usable.</summary>
+    public bool TranscriptionAvailable =>
+        WhisperAvailable || (_state.Config.Engine == "parakeet" && _state.Parakeet.Available);
+    partial void OnWhisperAvailableChanged(bool value) => OnPropertyChanged(nameof(TranscriptionAvailable));
+
+    /// <summary>Recompute engine availability (after Settings closes or Parakeet finishes setup).</summary>
+    public void RefreshTranscriptionAvailability()
+    {
+        OnPropertyChanged(nameof(TranscriptionAvailable));
+        UpdateSpeechCount();
+    }
+
     [ObservableProperty] private bool _isTranscribing;
     [ObservableProperty] private double _transcribeProgress;
     [ObservableProperty] private string _transcribeStatus = "";
@@ -92,7 +107,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <summary>Count of catalogued sounds that have a non-silent transcript.</summary>
     public void UpdateSpeechCount()
     {
-        if (!WhisperAvailable || _allRows.Count == 0) { SpeechCountText = ""; return; }
+        if (!TranscriptionAvailable || _allRows.Count == 0) { SpeechCountText = ""; return; }
         int n = _allRows.Count(r => _state.TranscriptCache.TryGet(_state.CacheKey(r.Entry), out var tc) && !tc.NoSpeech);
         SpeechCountText = n > 0 ? $"{n:N0} voiced" : "";
     }
@@ -602,6 +617,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         if (_state.Parakeet.Available)
         {
+            RefreshTranscriptionAvailability();
             StatusText = $"Parakeet ready ({(_state.Parakeet.UsesCuda ? "GPU" : "CPU")}).";
             return;
         }
@@ -613,6 +629,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             bool ok = await _state.EnsureParakeetAsync(
                 (p, m) => Dispatcher.UIThread.Post(() => { TranscribeProgress = p; TranscribeStatus = m; }), _transcribeCts.Token);
+            RefreshTranscriptionAvailability();
             StatusText = _transcribeCts.IsCancellationRequested ? "Parakeet setup cancelled."
                        : ok ? $"Parakeet ready ({(_state.Parakeet.UsesCuda ? "GPU" : "CPU")})."
                             : "Parakeet setup failed (check connection).";

@@ -152,7 +152,7 @@
                     </Border>
                 </StackPanel>
                 <Button Grid.Column="4" Content="Transcribe" Margin="0,0,8,0"
-                        IsEnabled="{Binding IndexLoaded}" IsVisible="{Binding WhisperAvailable}">
+                        IsEnabled="{Binding IndexLoaded}" IsVisible="{Binding TranscriptionAvailable}">
                     <Button.Flyout>
                         <MenuFlyout>
                             <MenuItem Header="Transcribe current sound" Command="{Binding TranscribeCurrentCommand}"/>

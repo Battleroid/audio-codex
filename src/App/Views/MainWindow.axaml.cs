@@ -124,6 +124,8 @@ public partial class MainWindow : Window
             await vm.ApplyWordlistAsync();
         if (result.ParakeetSelected)
             await vm.EnsureParakeetAsync();
+        // Engine selection may have changed which engine is active; recompute UI availability.
+        vm.RefreshTranscriptionAvailability();
     }
 
     private void OnSelectionChanged(object? sender, SelectionChangedEventArgs e)

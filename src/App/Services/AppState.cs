@@ -449,7 +449,12 @@ public sealed class AppState
         // Windows' bundled tar (bsdtar) auto-detects bzip2.
         var psi = new System.Diagnostics.ProcessStartInfo { FileName = "tar", UseShellExecute = false, CreateNoWindow = true };
         psi.ArgumentList.Add("-xf"); psi.ArgumentList.Add(archive); psi.ArgumentList.Add("-C"); psi.ArgumentList.Add(dir);
-        using (var p = System.Diagnostics.Process.Start(psi)!) await p.WaitForExitAsync(ct);
+        using (var p = System.Diagnostics.Process.Start(psi)!)
+        {
+            // Cancelling only the await would leave tar writing into tools/parakeet; kill the child too.
+            using var reg = ct.Register(() => { try { if (!p.HasExited) p.Kill(true); } catch { } });
+            await p.WaitForExitAsync(ct);
+        }
         try { File.Delete(archive); } catch { }
     }
 
