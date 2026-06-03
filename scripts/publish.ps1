@@ -20,6 +20,16 @@ $CudaZips  = @(
   "https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.8.0.87_cuda12-archive.zip"
 )
 
+# Parakeet needs the full model, not just the encoder — an interrupted copy could leave only
+# encoder*.onnx, which would wrongly look "done" and ship a release that can't transcribe.
+function Test-ParakeetModel($model) {
+  if (-not (Test-Path $model)) { return $false }
+  foreach ($pat in @("encoder*.onnx", "decoder*.onnx", "joiner*.onnx", "tokens*.txt")) {
+    if (@(Get-ChildItem $model -Filter $pat -ErrorAction SilentlyContinue).Count -eq 0) { return $false }
+  }
+  return $true
+}
+
 function Ensure-Parakeet($pk) {
   $bin = Join-Path $pk "bin"; $model = Join-Path $pk "model"
   # Each CUDA redist zip paired with a marker DLL it must produce, so an interrupted bundle can
@@ -30,7 +40,7 @@ function Ensure-Parakeet($pk) {
   }
   $missingCuda = @($cudaMarkers.Keys | Where-Object { -not (Test-Path (Join-Path $bin $_)) })
   $haveBin   = (Test-Path (Join-Path $bin "sherpa-onnx-offline.exe")) -and ($missingCuda.Count -eq 0)
-  $haveModel = Test-Path (Join-Path $model "encoder.int8.onnx")
+  $haveModel = Test-ParakeetModel $model
   if ($haveBin -and $haveModel) { Write-Host "Parakeet runtime + model already present (reusing)." -ForegroundColor Green; return }
 
   New-Item -ItemType Directory -Force -Path $bin, $model | Out-Null
@@ -56,7 +66,7 @@ function Ensure-Parakeet($pk) {
         ForEach-Object { Copy-Item $_.FullName $bin -Force }
       Remove-Item $z, $ez -Recurse -Force
     }
-    if (-not (Test-Path (Join-Path $model "encoder.int8.onnx"))) {
+    if (-not (Test-ParakeetModel $model)) {
       Write-Host "Downloading Parakeet int8 model..." -ForegroundColor Cyan
       $a = Join-Path $tmp "model.tar.bz2"; curl.exe -sL -o $a $ModelUrl
       tar -xf $a -C $tmp

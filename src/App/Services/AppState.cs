@@ -410,7 +410,15 @@ public sealed class AppState
                     0.05 + 0.20 * i / missing.Count, 0.05 + 0.20 * (i + 1) / missing.Count, progress, ct);
         }
 
-        if (!Directory.Exists(modelDir) || !Directory.EnumerateFiles(modelDir, "encoder*.onnx").Any())
+        // Require the *full* model (encoder + decoder + joiner + tokens) — an interrupted prior
+        // run could have left only encoder*.onnx, which would otherwise skip the download forever
+        // and leave Parakeet permanently unavailable.
+        bool ModelComplete() => Directory.Exists(modelDir)
+            && Directory.EnumerateFiles(modelDir, "encoder*.onnx").Any()
+            && Directory.EnumerateFiles(modelDir, "decoder*.onnx").Any()
+            && Directory.EnumerateFiles(modelDir, "joiner*.onnx").Any()
+            && Directory.EnumerateFiles(modelDir, "tokens*.txt").Any();
+        if (!ModelComplete())
         {
             await FetchTarBz2Async(ParakeetModelUrl, root, "model.tar.bz2", "Downloading Parakeet model (~1 GB)", 0.25, 1.0, progress, ct);
             string? ex = Directory.GetDirectories(root, "sherpa-onnx-nemo-parakeet*").FirstOrDefault();
