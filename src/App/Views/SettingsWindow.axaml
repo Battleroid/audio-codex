@@ -65,6 +65,32 @@
             <TextBlock Classes="hint" Text="A list of candidate names; matches reveal real sound/soundbank names (applied immediately)."/>
         </StackPanel>
 
+        <StackPanel Spacing="4">
+            <TextBlock Classes="h" Text="TRANSCRIPTION (SPEECH-TO-TEXT)"/>
+            <StackPanel Name="EnginePanel" Spacing="3" Margin="0,0,0,8" IsVisible="False">
+                <TextBlock Classes="hint" Margin="0" Text="Engine"/>
+                <ComboBox Name="EngineBox" HorizontalAlignment="Stretch">
+                    <ComboBoxItem>Whisper (base.en, bundled)</ComboBoxItem>
+                    <ComboBoxItem>Parakeet v2 (NVIDIA, downloads ~1.3 GB)</ComboBoxItem>
+                </ComboBox>
+                <TextBlock Name="EngineHint" Classes="hint" Margin="0"/>
+            </StackPanel>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                <StackPanel Grid.Column="0" Spacing="3">
+                    <TextBlock Classes="hint" Margin="0" Text="Parallel workers (blank = auto)"/>
+                    <TextBox Name="WorkersBox" Watermark="auto"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="3">
+                    <TextBlock Classes="hint" Margin="0" Text="Threads per worker (blank = auto)"/>
+                    <TextBox Name="ThreadsBox" Watermark="auto"/>
+                </StackPanel>
+            </Grid>
+            <TextBlock Name="ConcurrencyHint" Classes="hint"/>
+            <CheckBox Name="DenoiseBox" Margin="0,6,0,0" Content="Denoise retry for borderline lines (experimental)"/>
+            <TextBlock Classes="hint" Margin="0"
+                       Text="Re-transcribes only unconfirmed lines on denoised audio and keeps it only if it matches the in-game text better. Marginal; off by default."/>
+        </StackPanel>
+
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,6,0,0">
             <Button Content="Cancel" Click="OnCancel" Width="90"/>
             <Button Content="Save" Click="OnSave" Width="90" Background="#c8f000" Foreground="#0b0b0c" BorderThickness="0"/>

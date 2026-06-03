@@ -36,8 +36,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private int _selectGen;
     private bool _pendingAutoPlay;
     private DispatcherTimer? _searchDebounce;
+    private CancellationTokenSource? _transcribeCts;
+    private Task<(int processed, int speech)>? _transcribeTask;
 
     public Func<Task<string?>>? PickFolderAsync;
+    /// <summary>Set by the view: shows a yes/no confirmation; returns true to proceed.</summary>
+    public Func<string, Task<bool>>? ConfirmAsync;
 
     public MainWindowViewModel()
     {
@@ -52,7 +56,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         // periodically persist the metadata/waveform cache
         _flushTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
-        _flushTimer.Tick += (_, _) => _state.FlushCache();
+        _flushTimer.Tick += (_, _) => { _state.FlushCache(); _state.FlushTranscripts(); };
         _flushTimer.Start();
 
         NeedsSetup = !_state.GameDirValid;
@@ -60,6 +64,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                                 : "Ready. Click “Load sounds” to index packages.";
         GameDirText = _state.Config.GameDir ?? "(not set)";
         VgmAvailable = _state.Vgm.Available;
+        WhisperAvailable = _state.Whisper.Available;
         Groups.Add(new GroupOption { IsAll = true, Count = 0 });
         _selectedGroup = Groups[0];
         UpdateExportTarget();
@@ -74,6 +79,67 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _gameDirText = "";
     [ObservableProperty] private bool _vgmAvailable;
     [ObservableProperty] private bool _indexLoaded;
+
+    // ---- transcription ----
+    [ObservableProperty] private bool _whisperAvailable;
+
+    /// <summary>True when *some* ASR engine is usable: Whisper, or Parakeet when it is the
+    /// selected and installed engine. (Independent of the decoder — drives the engine warning.)</summary>
+    public bool EngineAvailable =>
+        WhisperAvailable || (_state.Config.Engine == "parakeet" && _state.Parakeet.Available);
+
+    /// <summary>True when transcription can actually run: an engine *and* the WEM decoder
+    /// (vgmstream), which every transcript needs to produce its WAV input. Drives the Transcribe
+    /// menu + speech count, so a Parakeet-only install is usable while a missing decoder disables it.</summary>
+    public bool TranscriptionAvailable => EngineAvailable && _state.Vgm.Available;
+    partial void OnWhisperAvailableChanged(bool value)
+    {
+        OnPropertyChanged(nameof(EngineAvailable));
+        OnPropertyChanged(nameof(TranscriptionAvailable));
+    }
+
+    /// <summary>Recompute engine availability (after Settings closes or Parakeet finishes setup).</summary>
+    public void RefreshTranscriptionAvailability()
+    {
+        OnPropertyChanged(nameof(EngineAvailable));
+        OnPropertyChanged(nameof(TranscriptionAvailable));
+        UpdateSpeechCount();
+    }
+
+    [ObservableProperty] private bool _isTranscribing;
+    [ObservableProperty] private double _transcribeProgress;
+    [ObservableProperty] private string _transcribeStatus = "";
+    [ObservableProperty] private string _speechCountText = "";
+    public bool HasSpeechCount => !string.IsNullOrEmpty(SpeechCountText);
+    partial void OnSpeechCountTextChanged(string value) => OnPropertyChanged(nameof(HasSpeechCount));
+
+    /// <summary>Count of catalogued sounds that have a non-silent transcript.</summary>
+    public void UpdateSpeechCount()
+    {
+        if (!TranscriptionAvailable || _allRows.Count == 0) { SpeechCountText = ""; return; }
+        int n = _allRows.Count(r => _state.TranscriptCache.TryGet(_state.CacheKey(r.Entry), out var tc) && !tc.NoSpeech);
+        SpeechCountText = n > 0 ? $"{n:N0} voiced" : "";
+    }
+    private bool _fuzzyTranscriptSearch;
+    public bool FuzzyTranscriptSearch
+    {
+        get => _fuzzyTranscriptSearch;
+        set { if (SetProperty(ref _fuzzyTranscriptSearch, value)) DebouncedFilter(); }
+    }
+
+    private bool _speechOnly;
+    public bool SpeechOnly
+    {
+        get => _speechOnly;
+        set { if (SetProperty(ref _speechOnly, value)) ApplyFilter(); }
+    }
+
+    private bool _hideEmpty = true;
+    public bool HideEmpty
+    {
+        get => _hideEmpty;
+        set { if (SetProperty(ref _hideEmpty, value)) ApplyFilter(); }
+    }
 
     // ---- catalogue ----
     [ObservableProperty] private IReadOnlyList<SoundRow> _items = Array.Empty<SoundRow>();
@@ -121,6 +187,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _selDuration = "";
     [ObservableProperty] private string _selSize = "";
     [ObservableProperty] private bool _hasSelection;
+    [ObservableProperty] private string _selTranscript = "";
+    [ObservableProperty] private bool _selTranscriptCorrected;
 
     // ---- playback ----
     [ObservableProperty] private float[]? _peaks;
@@ -169,6 +237,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             RebuildGroups();
             ApplyFilter();
+            _state.BuildTranscriptIndex();   // make any previously-cached transcripts searchable
+            UpdateSpeechCount();
             IndexLoaded = true;
             string names = _state.Manager.Names.WordlistCount > 0
                 ? $" • wordlist: {_state.Manager.Names.WordlistCount}" : "";
@@ -195,20 +265,24 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private async Task OnGroupByChangedAsync()
     {
         if (!IndexLoaded) return;
-        if (_groupBy == "Soundbank" && !_state.Manager!.SoundbanksBuilt)
-        {
-            IsBusy = true;
-            StatusText = "Building soundbanks…";
-            try
-            {
-                await Task.Run(() => _state.Manager!.BuildSoundbanks((p, msg) =>
-                    Dispatcher.UIThread.Post(() => { ProgressValue = p; ProgressText = msg; })));
-            }
-            catch (Exception ex) { StatusText = "Soundbank build failed: " + ex.Message; }
-            finally { IsBusy = false; ProgressText = ""; }
-        }
+        if (_groupBy == "Soundbank") await EnsureSoundbanksBuiltAsync();
         RebuildGroups();
         ApplyFilter();
+    }
+
+    /// <summary>Build soundbanks once (off the UI thread) if they haven't been built yet.</summary>
+    private async Task EnsureSoundbanksBuiltAsync()
+    {
+        if (_state.Manager is not { SoundbanksBuilt: false }) return;
+        IsBusy = true;
+        StatusText = "Building soundbanks…";
+        try
+        {
+            await Task.Run(() => _state.Manager!.BuildSoundbanks((p, msg) =>
+                Dispatcher.UIThread.Post(() => { ProgressValue = p; ProgressText = msg; })));
+        }
+        catch (Exception ex) { StatusText = "Soundbank build failed: " + ex.Message; }
+        finally { IsBusy = false; ProgressText = ""; }
     }
 
     private void RebuildGroups()
@@ -243,9 +317,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
     private void OnDebounceTick(object? s, EventArgs e) { _searchDebounce!.Stop(); ApplyFilter(); }
 
-    private void ApplyFilter()
+    /// <summary>Rows belonging to the currently selected group (or all rows when "All").</summary>
+    private IEnumerable<SoundRow> RowsInSelectedGroup()
     {
-        string q = _searchText.Trim();
         IEnumerable<SoundRow> src = _allRows;
         if (_selectedGroup is { IsAll: false } g)
         {
@@ -253,11 +327,31 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             else if (g.PackageName != null) src = src.Where(r => r.PackageName == g.PackageName);
             else src = src.Where(r => r.Entry.SoundbankTag == g.BankTag);
         }
+        return src;
+    }
+
+    private void ApplyFilter()
+    {
+        string q = _searchText.Trim();
+        IEnumerable<SoundRow> src = RowsInSelectedGroup();
+        if (_hideEmpty)
+            src = src.Where(x => !x.Entry.IsEmpty);
+        if (_speechOnly)
+            src = src.Where(x => _state.TranscriptCache.TryGet(_state.CacheKey(x.Entry), out var tc) && !tc.NoSpeech);
         if (q.Length > 0)
+        {
+            // Fuzzy "similar word" matches come from the inverted index (only when toggled on).
+            HashSet<SoundEntry>? fuzzy = _fuzzyTranscriptSearch
+                ? new HashSet<SoundEntry>(_state.Index.SimilarWords(q))
+                : null;
             src = src.Where(x =>
                 x.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
                 x.TagId.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                x.PackageName.Contains(q, StringComparison.OrdinalIgnoreCase));
+                x.PackageName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (_state.TranscriptCache.TryGet(_state.CacheKey(x.Entry), out var tc)
+                    && !tc.NoSpeech && tc.Text.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
+                (fuzzy != null && fuzzy.Contains(x.Entry)));
+        }
         var result = src as List<SoundRow> ?? src.ToList();
         for (int i = 0; i < result.Count; i++) result[i].Ordinal = i + 1;
         Items = result;
@@ -277,10 +371,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 var r = _state.LoadRowPreview(row.Entry);
+                bool hasTr = _state.TranscriptCache.TryGet(_state.CacheKey(row.Entry), out var tc) && !tc.NoSpeech;
                 if (r is { } v)
                     Dispatcher.UIThread.Post(() =>
                     {
                         row.Meta = v.meta; row.DurationText = v.duration; row.MiniPeaks = v.peaks;
+                        if (hasTr) row.Transcript = tc!.Text;
                     });
             }
             catch { row.LoadRequested = false; }
@@ -306,6 +402,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         SelName = s.DisplayName; SelTagId = s.TagId; SelPackage = s.PackageName;
         SelSize = FormatBytes(s.Size);
         SelCodec = SelChannels = SelRate = SelDuration = "…";
+        bool hasT = _state.TranscriptCache.TryGet(_state.CacheKey(s), out var tcs) && !tcs.NoSpeech;
+        SelTranscript = hasT ? tcs!.Text : "";
+        SelTranscriptCorrected = hasT && tcs!.Corrected;
 
         try
         {
@@ -460,6 +559,211 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         finally { IsBusy = false; ProgressText = ""; }
     }
 
+    // ================= Transcription =================
+    [RelayCommand]
+    private Task TranscribeCurrentAsync()
+    {
+        var s = SelectedRow?.Entry;
+        return s == null ? Task.CompletedTask
+                         : RunTranscribeAsync(new[] { s }, "current", cleanupDecoded: false);
+    }
+
+    [RelayCommand]
+    private Task TranscribeSelectedAsync()
+    {
+        var list = _selection.Count > 0
+            ? _selection.Select(r => r.Entry).ToList()
+            : SelectedRow != null ? new List<SoundEntry> { SelectedRow.Entry } : new List<SoundEntry>();
+        return RunTranscribeAsync(list, "selected", cleanupDecoded: false);
+    }
+
+    [RelayCommand]
+    private Task TranscribeGroupAsync()
+    {
+        // The "All" group is the whole catalogue — route it through the confirmed all-sounds
+        // path so it can't bypass the warning.
+        if (_selectedGroup is null or { IsAll: true }) return TranscribeAllAsync();
+        var list = RowsInSelectedGroup().Select(r => r.Entry).ToList();
+        return RunTranscribeAsync(list, _selectedGroup.Label, cleanupDecoded: true);
+    }
+
+    [RelayCommand]
+    private async Task TranscribeAllAsync()
+    {
+        var list = _allRows.Select(r => r.Entry).ToList();
+        if (list.Count == 0) return;
+        if (ConfirmAsync != null)
+        {
+            var (w, t) = _state.ResolveConcurrency();
+            bool ok = await ConfirmAsync(
+                $"Transcribe all {list.Count:N0} sounds?\n\n" +
+                $"This can take a long time (running {w} workers × {t} threads). " +
+                "Most non-voice clips are skipped automatically, and you can cancel anytime.");
+            if (!ok) return;
+        }
+        await RunTranscribeAsync(list, "all", cleanupDecoded: true);
+    }
+
+    [RelayCommand]
+    private async Task TranscribeVoiceBanksAsync()
+    {
+        // Only require Whisper when it's the active engine — Parakeet can transcribe on its own.
+        bool useParakeet = _state.Config.Engine == "parakeet" && _state.Parakeet.Available;
+        if (!useParakeet && !_state.Whisper.Available)
+        {
+            StatusText = "Speech recognition unavailable — whisper-cli.exe / model missing under tools/whisper.";
+            return;
+        }
+        if (!_state.Vgm.Available)
+        {
+            StatusText = "Audio decoder unavailable — vgmstream-cli.exe missing under tools/vgmstream.";
+            return;
+        }
+        // Voice banks are identified by soundbank name, which is only resolved once soundbanks
+        // are built — make sure that has happened before resolving the preset.
+        await EnsureSoundbanksBuiltAsync();
+        await RunTranscribeAsync(_state.VoiceBankSounds(), "voice banks", cleanupDecoded: true);
+    }
+
+    [RelayCommand]
+    private void CancelTranscribe() => _transcribeCts?.Cancel();
+
+    /// <summary>Download + set up the Parakeet engine on first selection.</summary>
+    public async Task EnsureParakeetAsync()
+    {
+        // Fully ready only when Parakeet is available AND we're not stuck on an incomplete GPU
+        // runtime: a machine with a CUDA GPU that isn't actually using CUDA means the runtime
+        // DLLs are partial, so fall through to re-run setup and fetch the missing ones.
+        bool gpuIncomplete = _state.CudaAvailable && !_state.Parakeet.UsesCuda;
+        if (_state.Parakeet.Available && !gpuIncomplete)
+        {
+            RefreshTranscriptionAvailability();
+            StatusText = $"Parakeet ready ({(_state.Parakeet.UsesCuda ? "GPU" : "CPU")}).";
+            return;
+        }
+        if (IsTranscribing) { StatusText = "A run is already in progress."; return; }
+        IsTranscribing = true; TranscribeProgress = 0; TranscribeStatus = "Setting up Parakeet…";
+        // Use the shared CTS so the Cancel button and window-close can abort the multi-GB setup.
+        _transcribeCts = new CancellationTokenSource();
+        try
+        {
+            bool ok = await _state.EnsureParakeetAsync(
+                (p, m) => Dispatcher.UIThread.Post(() => { TranscribeProgress = p; TranscribeStatus = m; }), _transcribeCts.Token);
+            RefreshTranscriptionAvailability();
+            StatusText = _transcribeCts.IsCancellationRequested ? "Parakeet setup cancelled."
+                       : ok ? $"Parakeet ready ({(_state.Parakeet.UsesCuda ? "GPU" : "CPU")})."
+                            : "Parakeet setup failed (check connection).";
+        }
+        catch (OperationCanceledException) { StatusText = "Parakeet setup cancelled."; }
+        catch (Exception ex) { StatusText = "Parakeet setup failed: " + ex.Message; }
+        finally
+        {
+            IsTranscribing = false; TranscribeStatus = "";
+            _transcribeCts?.Dispose(); _transcribeCts = null;
+        }
+    }
+
+    /// <summary>Re-snap every cached transcript to the nearest canonical in-game line.</summary>
+    [RelayCommand]
+    private async Task RecorrectTranscriptsAsync()
+    {
+        if (_state.Manager == null) { StatusText = "Load sounds first."; return; }
+        if (IsTranscribing) { StatusText = "A run is already in progress."; return; }
+        IsTranscribing = true; TranscribeProgress = 0; TranscribeStatus = "Correcting…";
+        try
+        {
+            int changed = await Task.Run(() => _state.RecorrectCache((p, m) =>
+                Dispatcher.UIThread.Post(() => { TranscribeProgress = p; TranscribeStatus = m; })));
+            foreach (var row in Items)
+                if (_state.TranscriptCache.TryGet(_state.CacheKey(row.Entry), out var c) && !c.NoSpeech)
+                    row.Transcript = c.Text;
+            if (SelectedRow != null
+                && _state.TranscriptCache.TryGet(_state.CacheKey(SelectedRow.Entry), out var sc) && !sc.NoSpeech)
+            { SelTranscript = sc.Text; SelTranscriptCorrected = sc.Corrected; }
+            // Correction changed the transcript text, so rebuild the search index — otherwise the
+            // "≈ similar words" fuzzy branch keeps matching against the pre-correction vocabulary.
+            _state.BuildTranscriptIndex();
+            ApplyFilter(); UpdateSpeechCount();
+            StatusText = $"Re-corrected {changed:N0} transcripts against the in-game text corpus.";
+        }
+        catch (Exception ex) { StatusText = "Re-correction failed: " + ex.Message; }
+        finally { IsTranscribing = false; TranscribeStatus = ""; }
+    }
+
+    private async Task RunTranscribeAsync(IReadOnlyList<SoundEntry> targets, string label, bool cleanupDecoded)
+    {
+        // Parakeet is a self-contained engine; only require Whisper when it's the active engine.
+        bool useParakeet = _state.Config.Engine == "parakeet" && _state.Parakeet.Available;
+        if (!useParakeet && !_state.Whisper.Available)
+        {
+            StatusText = "Speech recognition unavailable — whisper-cli.exe / model missing under tools/whisper.";
+            return;
+        }
+        if (!_state.Vgm.Available)
+        {
+            StatusText = "Audio decoder unavailable — vgmstream-cli.exe missing under tools/vgmstream.";
+            return;
+        }
+        if (IsTranscribing) { StatusText = "A transcription run is already in progress."; return; }
+        if (targets.Count == 0) { StatusText = $"No sounds to transcribe ({label})."; return; }
+
+        // If some targets are already transcribed, offer to redo them (e.g. after switching engines).
+        // Otherwise we keep the default behaviour: skip cached, transcribe only what's new.
+        bool force = false;
+        int already = targets.Count(s => _state.TranscriptCache.TryGet(_state.CacheKey(s), out _));
+        if (already > 0 && ConfirmAsync != null)
+        {
+            string engine = _state.Config.Engine == "parakeet" && _state.Parakeet.Available ? "Parakeet" : "Whisper";
+            string scope = targets.Count == 1
+                ? $"This sound is already transcribed. Re-transcribe it with {engine}?"
+                : already == targets.Count
+                    ? $"All {already:N0} of these sounds are already transcribed. Re-transcribe them with {engine}?"
+                    : $"{already:N0} of {targets.Count:N0} sounds ({label}) are already transcribed.\n\n" +
+                      $"Choose Transcribe to redo everything with {engine}, or Cancel to do only the {targets.Count - already:N0} remaining.";
+            force = await ConfirmAsync(scope);
+            // Nothing new and the user declined to redo -> there's no work to do.
+            if (!force && already == targets.Count)
+            {
+                StatusText = $"Already transcribed ({label}) — nothing to do.";
+                return;
+            }
+        }
+
+        _transcribeCts = new CancellationTokenSource();
+        CancellationToken ct = _transcribeCts.Token;
+        IsTranscribing = true;
+        TranscribeProgress = 0;
+        TranscribeStatus = $"Starting… ({label})";
+        try
+        {
+            _transcribeTask = _state.BuildTranscripts(targets, (p, msg) =>
+                Dispatcher.UIThread.Post(() => { TranscribeProgress = p; TranscribeStatus = msg; }),
+                ct, cleanupDecoded, force: force);
+            var (processed, speech) = await _transcribeTask;
+
+            // Reflect new transcripts on the visible rows and re-run the filter. A forced redo can
+            // turn a previously-spoken clip into no-speech, so clear stale text instead of skipping it.
+            foreach (var row in Items)
+                if (_state.TranscriptCache.TryGet(_state.CacheKey(row.Entry), out var c))
+                    row.Transcript = c.NoSpeech ? "" : c.Text;
+            if (SelectedRow != null
+                && _state.TranscriptCache.TryGet(_state.CacheKey(SelectedRow.Entry), out var sc))
+            { SelTranscript = sc.NoSpeech ? "" : sc.Text; SelTranscriptCorrected = !sc.NoSpeech && sc.Corrected; }
+            ApplyFilter();
+            UpdateSpeechCount();
+
+            StatusText = ct.IsCancellationRequested
+                ? $"Transcription cancelled • {processed} done this run ({label}) • cache {_state.TranscriptCache.Count:N0}"
+                : $"Transcribed {processed} • {speech} with speech ({label}) • cache {_state.TranscriptCache.Count:N0}";
+        }
+        catch (Exception ex) { StatusText = "Transcription failed: " + ex.Message; }
+        finally
+        {
+            IsTranscribing = false; TranscribeStatus = "";
+            _transcribeCts?.Dispose(); _transcribeCts = null;
+        }
+    }
+
     private static string NameFor(SoundEntry s)
     {
         string baseName = s.Name ?? s.TagId;
@@ -475,7 +779,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         _flushTimer.Stop();
+        _transcribeCts?.Cancel();
+        // Wait (bounded) for an in-flight batch to unwind after cancellation so its own final
+        // TranscriptCache flush completes — otherwise a worker's Set() racing our flush below
+        // could be lost and that clip re-transcribed next run. Cancellation kills the CLI
+        // children promptly, so this returns quickly.
+        try { _transcribeTask?.Wait(TimeSpan.FromSeconds(10)); } catch { }
         _state.FlushCache();
+        _state.FlushTranscripts();
         _player.Dispose();
     }
 }

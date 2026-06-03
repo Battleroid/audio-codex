@@ -128,7 +128,7 @@
 
         <!-- Header -->
         <Border Grid.Row="0" Background="#1f1f24" Padding="14,10" BorderBrush="#37373d" BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" VerticalAlignment="Center">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" VerticalAlignment="Center">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                     <Border Width="13" Height="13" Background="#c8f000"/>
                     <StackPanel>
@@ -142,11 +142,32 @@
                     <Slider Width="120" Minimum="0" Maximum="1" Value="{Binding Volume, Mode=TwoWay}"
                             Foreground="#c8f000" VerticalAlignment="Center"/>
                 </StackPanel>
-                <Border Grid.Column="3" Margin="8,0" Padding="8,4" Background="#161618"
-                        VerticalAlignment="Center" IsVisible="{Binding !VgmAvailable}">
-                    <TextBlock Text="vgmstream not found" Foreground="#c8f000" FontSize="11"/>
-                </Border>
-                <Button Grid.Column="4" Content="Export" Margin="0,0,8,0" IsEnabled="{Binding IndexLoaded}">
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" Margin="8,0"
+                            VerticalAlignment="Center">
+                    <Border Padding="8,4" Background="#161618" IsVisible="{Binding !VgmAvailable}">
+                        <TextBlock Text="vgmstream not found" Foreground="#c8f000" FontSize="11"/>
+                    </Border>
+                    <Border Padding="8,4" Background="#161618" IsVisible="{Binding !EngineAvailable}">
+                        <TextBlock Text="whisper not found" Foreground="#c8f000" FontSize="11"/>
+                    </Border>
+                </StackPanel>
+                <Button Grid.Column="4" Content="Transcribe" Margin="0,0,8,0"
+                        IsEnabled="{Binding IndexLoaded}" IsVisible="{Binding TranscriptionAvailable}">
+                    <Button.Flyout>
+                        <MenuFlyout>
+                            <MenuItem Header="Transcribe current sound" Command="{Binding TranscribeCurrentCommand}"/>
+                            <MenuItem Header="Transcribe selected" Command="{Binding TranscribeSelectedCommand}"/>
+                            <MenuItem Header="Transcribe current group" Command="{Binding TranscribeGroupCommand}"/>
+                            <MenuItem Header="Transcribe voice banks" Command="{Binding TranscribeVoiceBanksCommand}"/>
+                            <Separator/>
+                            <MenuItem Header="Transcribe all sounds…" Command="{Binding TranscribeAllCommand}"/>
+                            <Separator/>
+                            <MenuItem Header="Re-correct transcripts (snap to in-game text)"
+                                      Command="{Binding RecorrectTranscriptsCommand}"/>
+                        </MenuFlyout>
+                    </Button.Flyout>
+                </Button>
+                <Button Grid.Column="5" Content="Export" Margin="0,0,8,0" IsEnabled="{Binding IndexLoaded}">
                     <Button.Flyout>
                         <MenuFlyout>
                             <MenuItem Header="Export selected" Command="{Binding ExportSelectedCommand}"/>
@@ -155,7 +176,7 @@
                         </MenuFlyout>
                     </Button.Flyout>
                 </Button>
-                <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8">
+                <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="8">
                     <Button Content="Settings" Click="OnSettings"/>
                     <Button Classes="primary" Content="Load sounds" Command="{Binding LoadIndexCommand}" IsEnabled="{Binding !IsBusy}"/>
                 </StackPanel>
@@ -168,6 +189,17 @@
                 <ProgressBar Grid.Column="0" Minimum="0" Maximum="1" Value="{Binding ProgressValue}" Height="4"
                              Foreground="#c8f000" Background="#26262b"/>
                 <TextBlock Grid.Column="1" Text="{Binding ProgressText}" Foreground="#9b9ba3" FontSize="11" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <!-- Transcription progress -->
+        <Border Grid.Row="1" Background="#1f1f24" Padding="14,6" IsVisible="{Binding IsTranscribing}">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
+                <TextBlock Grid.Column="0" Text="TRANSCRIBING" Foreground="#c8f000" FontSize="11" VerticalAlignment="Center"/>
+                <ProgressBar Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding TranscribeProgress}" Height="4"
+                             Foreground="#c8f000" Background="#26262b" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="2" Text="{Binding TranscribeStatus}" Foreground="#9b9ba3" FontSize="11" VerticalAlignment="Center"/>
+                <Button Grid.Column="3" Content="Cancel" Padding="10,3" Command="{Binding CancelTranscribeCommand}"/>
             </Grid>
         </Border>
 
@@ -189,10 +221,22 @@
                             </ComboBox.ItemTemplate>
                         </ComboBox>
                     </Grid>
-                    <TextBox Watermark="Search by name, tag id, or package…" Text="{Binding SearchText, Mode=TwoWay}"/>
-                    <Grid ColumnDefinitions="*,Auto">
-                        <TextBlock Grid.Column="0" Text="{Binding ResultCountText}" Classes="k"/>
-                        <TextBlock Grid.Column="1" Text="{Binding SelectionInfo}" Foreground="#c8f000" FontSize="11"/>
+                    <TextBox Watermark="Search name, tag, package, or spoken words…" Text="{Binding SearchText, Mode=TwoWay}"/>
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="14">
+                            <CheckBox IsChecked="{Binding HideEmpty, Mode=TwoWay}"
+                                      Foreground="#9b9ba3" FontSize="11" Content="hide empty"/>
+                            <CheckBox IsChecked="{Binding SpeechOnly, Mode=TwoWay}"
+                                      IsVisible="{Binding TranscriptionAvailable}"
+                                      Foreground="#9b9ba3" FontSize="11" Content="speech only"/>
+                            <CheckBox IsChecked="{Binding FuzzyTranscriptSearch, Mode=TwoWay}"
+                                      IsVisible="{Binding TranscriptionAvailable}"
+                                      Foreground="#9b9ba3" FontSize="11" Content="≈ similar words"/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding ResultCountText}" Classes="k"
+                                   VerticalAlignment="Center" Margin="10,0,0,0"/>
+                        <TextBlock Grid.Column="2" Text="{Binding SelectionInfo}" Foreground="#c8f000" FontSize="11"
+                                   VerticalAlignment="Center"/>
                     </Grid>
                 </StackPanel>
 
@@ -220,8 +264,17 @@
                                                 <TextBlock Text="{Binding Meta}" Foreground="#6b6b67" FontSize="11"/>
                                             </StackPanel>
                                         </StackPanel>
-                                        <TextBlock Grid.Column="2" Text="{Binding DurationText}" Foreground="#4a4a48"
-                                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                                                    VerticalAlignment="Center" Margin="8,0,0,0">
+                                            <!-- speech-bubble icon: shown only when the sound has a (speech) transcript -->
+                                            <Path Width="14" Height="13" Stretch="Uniform" Fill="#3f7a00"
+                                                  Data="M0,0 H14 V9 H6 L3,12 L5,9 H0 Z"
+                                                  VerticalAlignment="Center"
+                                                  IsVisible="{Binding HasTranscript}"
+                                                  ToolTip.Tip="{Binding Transcript}"/>
+                                            <TextBlock Text="{Binding DurationText}" Foreground="#4a4a48"
+                                                       FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        </StackPanel>
                                     </Grid>
                                 </Grid>
                             </Border>
@@ -241,14 +294,16 @@
                         <StackPanel Spacing="6">
                             <TextBlock Text="{Binding SelName}" Foreground="#e8e8e6" FontSize="30"
                                        FontFamily="{StaticResource DisplayFont}" TextWrapping="Wrap"/>
-                            <TextBlock Text="{Binding SelPackage}" Foreground="#c8f000" FontSize="12"/>
+                            <TextBlock Text="{Binding SelPackage}" Foreground="#c8f000" FontSize="12"
+                                       Cursor="Hand" Tapped="OnCopyText" ToolTip.Tip="Click to copy"/>
                         </StackPanel>
 
                         <Border Background="#1a1a1f" BorderBrush="#37373d" BorderThickness="1" Padding="20,16">
                             <Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto" RowSpacing="14">
                                 <StackPanel Grid.Row="0" Grid.Column="0">
                                     <TextBlock Text="TAG ID" Classes="k"/>
-                                    <TextBlock Text="{Binding SelTagId}" Classes="v"/>
+                                    <TextBlock Text="{Binding SelTagId}" Classes="v"
+                                               Cursor="Hand" Tapped="OnCopyText" ToolTip.Tip="Click to copy"/>
                                 </StackPanel>
                                 <StackPanel Grid.Row="0" Grid.Column="1">
                                     <TextBlock Text="CODEC" Classes="k"/>
@@ -294,6 +349,22 @@
                             <Button Classes="primary" Content="Export selected" Command="{Binding ExportSelectedCommand}" IsEnabled="{Binding !IsBusy}"/>
                             <TextBlock Text="{Binding ExportTargetText}" Foreground="#8c8c94" FontSize="11" VerticalAlignment="Center"/>
                         </StackPanel>
+
+                        <!-- transcript -->
+                        <StackPanel Spacing="8" IsVisible="{Binding TranscriptionAvailable}">
+                            <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+                                <TextBlock Grid.Column="0" Text="TRANSCRIPT" Classes="k" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="◆ in-game text" Foreground="#c8f000" FontSize="10"
+                                           Margin="10,0,0,0" VerticalAlignment="Center"
+                                           ToolTip.Tip="Snapped to the nearest canonical localized-string line"
+                                           IsVisible="{Binding SelTranscriptCorrected}"/>
+                                <Button Grid.Column="3" Content="Transcribe this sound"
+                                        Command="{Binding TranscribeCurrentCommand}" IsEnabled="{Binding !IsTranscribing}"/>
+                            </Grid>
+                            <Border Background="#1a1a1f" BorderBrush="#37373d" BorderThickness="1" Padding="14,12" MinHeight="44">
+                                <TextBlock Text="{Binding SelTranscript}" Foreground="#e8e8e6" FontSize="13" TextWrapping="Wrap"/>
+                            </Border>
+                        </StackPanel>
                     </StackPanel>
                 </Panel>
             </Border>
@@ -301,10 +372,17 @@
 
         <!-- Status bar -->
         <Border Grid.Row="3" Background="#1f1f24" Padding="14,6" BorderBrush="#37373d" BorderThickness="0,1,0,0">
-            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                <Border Width="7" Height="7" Background="#c8f000" VerticalAlignment="Center"/>
-                <TextBlock Text="{Binding StatusText}" Foreground="#9b9ba3" FontSize="12" VerticalAlignment="Center"/>
-            </StackPanel>
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <Border Width="7" Height="7" Background="#c8f000" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding StatusText}" Foreground="#9b9ba3" FontSize="12" VerticalAlignment="Center"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center"
+                            IsVisible="{Binding HasSpeechCount}">
+                    <Path Width="13" Height="12" Stretch="Uniform" Fill="#c8f000" Data="M0,0 H14 V9 H6 L3,12 L5,9 H0 Z" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding SpeechCountText}" Foreground="#c8f000" FontSize="12" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Grid>
         </Border>
     </Grid>
 </Window>

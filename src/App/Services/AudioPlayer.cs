@@ -47,6 +47,38 @@ internal sealed class DownmixSampleProvider : ISampleProvider
     }
 }
 
+/// <summary>Downmixes any channel count to a single mono channel (averaging). Used to feed
+/// whisper, which requires 16 kHz mono input.</summary>
+internal sealed class MonoSampleProvider : ISampleProvider
+{
+    private readonly ISampleProvider _source;
+    private readonly int _ch;
+    private float[] _temp = Array.Empty<float>();
+    public WaveFormat WaveFormat { get; }
+
+    public MonoSampleProvider(ISampleProvider source)
+    {
+        _source = source;
+        _ch = source.WaveFormat.Channels;
+        WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(source.WaveFormat.SampleRate, 1);
+    }
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        int srcNeeded = count * _ch;
+        if (_temp.Length < srcNeeded) _temp = new float[srcNeeded];
+        int srcRead = _source.Read(_temp, 0, srcNeeded);
+        int frames = srcRead / _ch;
+        for (int f = 0; f < frames; f++)
+        {
+            float sum = 0; int b = f * _ch;
+            for (int c = 0; c < _ch; c++) sum += _temp[b + c];
+            buffer[offset + f] = sum / _ch;
+        }
+        return frames;
+    }
+}
+
 /// <summary>WAV playback (NAudio/WaveOut) + waveform peak extraction.</summary>
 public sealed class AudioPlayer : IDisposable
 {

@@ -18,8 +18,23 @@ __pycache__/
 # Downloaded archive (the extracted tools/vgmstream/ folder is what's used)
 tools/vgmstream.zip
 
+# whisper.cpp binaries + model (large / third-party; fetched, not committed — see tools/whisper/README.md)
+tools/whisper/*.exe
+tools/whisper/*.dll
+tools/whisper/*.bin
+tools/whisper/*.zip
+
+# DeepFilterNet denoiser binary (third-party; fetched, not committed)
+tools/deepfilter/*.exe
+
+# Parakeet / sherpa-onnx CUDA runtime + model (large; downloaded on first enable)
+tools/parakeet/
+
 # Logs
 *.log
+
+# Packaged release zips (build artifacts)
+audio-codex-*.zip
 
 # OS
 Thumbs.db

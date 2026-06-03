@@ -16,6 +16,53 @@ sealed class Program
             SmokeTest.Run();
             return;
         }
+        if (args.Length > 0 && args[0] == "--transcribe")
+        {
+            TranscribeCli.Run(args).GetAwaiter().GetResult();
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--parakeet")
+        {
+            var st = Services.AppState.Instance;
+            st.BuildIndex((p, m) => { });
+            string root = System.IO.Path.Combine(System.AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "parakeet");
+            root = System.IO.Path.GetFullPath(root);
+            var pk = new Tiger.Parakeet(System.IO.Path.Combine(root, "bin", "sherpa-onnx-offline.exe"),
+                                        System.IO.Path.Combine(root, "model"), st.CudaAvailable);
+            System.Console.WriteLine($"Parakeet available={pk.Available} usesCuda={pk.UsesCuda} (CudaDetected={st.CudaAvailable})");
+            if (pk.Available)
+            {
+                var s = st.Manager!.Sounds.Find(x => x.TagId == "80B662F2")
+                        ?? st.Manager!.Sounds.Find(x => x.PackageName.Contains("sr_audio") && x.Size > 80000);
+                string? wav16 = s != null ? st.DecodeTo16kMonoWav(s) : null;
+                if (s != null && wav16 != null)
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    var r = pk.Transcribe(wav16, 6, default);
+                    System.Console.WriteLine($"[{sw.ElapsedMilliseconds} ms] {s.TagId}: {r?.Text}");
+                }
+            }
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--corpus")
+        {
+            var st = Services.AppState.Instance;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            st.BuildIndex((p, m) => { });
+            var corp = st.EnsureCorpus((p, m) => { });
+            System.Console.WriteLine($"corpus: {corp.WordCount:N0} words, built in {sw.ElapsedMilliseconds} ms");
+            foreach (var line in new[] {
+                "indiscriminate force from the UESD is equally misguided however",
+                "data integrity low data integrity low",
+                "leave the airier",
+                "and now we're going to be making a new video",
+            })
+            {
+                var r = corp.Correct(line);
+                System.Console.WriteLine($"\nASR : {line}\nFIX : {(r is { } h ? $"{h.text}  [{h.score:F3}]" : "(no match)")}");
+            }
+            return;
+        }
         if (args.Length > 0 && args[0] == "--config")
         {
             var c = Services.AppState.Instance.Config;

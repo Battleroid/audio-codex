@@ -22,6 +22,10 @@ public partial class SoundRow : ObservableObject
     [ObservableProperty] private string _meta = "";
     [ObservableProperty] private float[]? _miniPeaks;
 
+    [ObservableProperty] private string _transcript = "";
+    public bool HasTranscript => !string.IsNullOrEmpty(Transcript);
+    partial void OnTranscriptChanged(string value) => OnPropertyChanged(nameof(HasTranscript));
+
     /// <summary>Notify that the proxied name may have changed (e.g. after loading a wordlist).</summary>
     public void RefreshName() => OnPropertyChanged(nameof(DisplayName));
 }

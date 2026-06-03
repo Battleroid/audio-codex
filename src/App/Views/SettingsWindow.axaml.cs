@@ -11,6 +11,7 @@ public sealed class SettingsResult
 {
     public bool GameDirChanged;
     public bool WordlistChanged;
+    public bool ParakeetSelected;   // user switched to Parakeet (may need a download)
 }
 
 public partial class SettingsWindow : Window
@@ -18,6 +19,7 @@ public partial class SettingsWindow : Window
     private readonly AppState _state = AppState.Instance;
     private readonly string? _origGameDir;
     private readonly string? _origWordlist;
+    private string _origEngine = "whisper";
 
     public SettingsWindow()
     {
@@ -25,8 +27,26 @@ public partial class SettingsWindow : Window
         GameBox.Text = _state.Config.GameDir ?? "";
         ExportBox.Text = _state.Config.ExportDir ?? "";
         WordlistBox.Text = _state.Config.WordlistFile ?? "";
+        WorkersBox.Text = _state.Config.TranscribeWorkers?.ToString() ?? "";
+        ThreadsBox.Text = _state.Config.TranscribeThreads?.ToString() ?? "";
+        DenoiseBox.IsChecked = _state.Config.DenoiseFallback;
+
+        // Always expose the engine selector: Whisper is CPU, and Parakeet has a CPU fallback
+        // (--provider=cpu) so it's usable without a GPU too — only the messaging is GPU-aware.
+        EnginePanel.IsVisible = true;
+        EngineBox.SelectedIndex = _state.Config.Engine == "parakeet" ? 1 : 0;
+        EngineHint.Text = _state.Parakeet.Available
+            ? $"Parakeet installed (running on {(_state.Parakeet.UsesCuda ? "GPU" : "CPU")})."
+            : _state.CudaAvailable
+                ? "Parakeet downloads on first use; runs on GPU when the CUDA cuBLAS runtime is present, otherwise CPU."
+                : "Parakeet downloads on first use; no CUDA GPU detected, so it will run on CPU.";
+        _origEngine = _state.Config.Engine;
         _origGameDir = _state.Config.GameDir;
         _origWordlist = _state.Config.WordlistFile;
+
+        var (w, t) = _state.ResolveConcurrency();
+        ConcurrencyHint.Text = $"{System.Environment.ProcessorCount} logical cores detected · " +
+                               $"auto uses {w} workers × {t} threads.";
     }
 
     private async Task<string?> PickFolder()
@@ -70,10 +90,19 @@ public partial class SettingsWindow : Window
         _state.SetExportDir(string.IsNullOrEmpty(export) ? null : export);
         _state.SetWordlistFile(string.IsNullOrEmpty(wordlist) ? null : wordlist);
 
+        int? workers = int.TryParse((WorkersBox.Text ?? "").Trim(), out int wv) && wv > 0 ? wv : null;
+        int? threads = int.TryParse((ThreadsBox.Text ?? "").Trim(), out int tv) && tv > 0 ? tv : null;
+        _state.SetTranscribeConcurrency(workers, threads);
+        _state.Config.DenoiseFallback = DenoiseBox.IsChecked == true;
+        string engine = EngineBox.SelectedIndex == 1 ? "parakeet" : "whisper";
+        _state.Config.Engine = engine;
+        _state.Save();
+
         Close(new SettingsResult
         {
             GameDirChanged = !string.Equals(_origGameDir ?? "", game),
             WordlistChanged = !string.Equals(_origWordlist ?? "", wordlist),
+            ParakeetSelected = engine == "parakeet" && (engine != _origEngine || !_state.Parakeet.Available),
         });
     }
 }

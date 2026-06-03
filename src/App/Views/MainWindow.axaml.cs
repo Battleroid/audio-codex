@@ -2,6 +2,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
@@ -18,7 +19,10 @@ public partial class MainWindow : Window
         DataContextChanged += (_, _) =>
         {
             if (DataContext is MainWindowViewModel vm)
+            {
                 vm.PickFolderAsync = PickFolderAsync;
+                vm.ConfirmAsync = ConfirmAsync;
+            }
         };
         // Intercept Space before children so it toggles playback (unless typing in a text box).
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
@@ -35,10 +39,85 @@ public partial class MainWindow : Window
 
     private MainWindowViewModel? Vm => DataContext as MainWindowViewModel;
 
+    private async void OnCopyText(object? sender, TappedEventArgs e)
+    {
+        if (sender is not TextBlock tb || string.IsNullOrEmpty(tb.Text)) return;
+        var clip = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clip == null) return;
+        await clip.SetTextAsync(tb.Text);
+        if (Vm is { } vm) vm.StatusText = $"Copied to clipboard: {tb.Text}";
+    }
+
     protected override void OnClosed(System.EventArgs e)
     {
-        Services.AppState.Instance.FlushCache();
+        // Dispose the view model so an in-flight transcribe run is cancelled (killing its
+        // whisper-cli children) and both caches are flushed. Fall back to a direct flush if
+        // the DataContext isn't our VM for some reason.
+        if (Vm is { } vm) vm.Dispose();
+        else
+        {
+            Services.AppState.Instance.FlushCache();
+            Services.AppState.Instance.FlushTranscripts();
+        }
         base.OnClosed(e);
+    }
+
+    /// <summary>Minimal modal yes/no confirmation (no XAML); returns true if confirmed.</summary>
+    private async Task<bool> ConfirmAsync(string message)
+    {
+        var yes = new Button
+        {
+            Content = "Transcribe", Width = 120,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+        };
+        // Accent (filled) primary; dark outlined secondary. Set the Fluent theme's per-state
+        // resource keys so the colours hold on hover/press instead of reverting to defaults.
+        ThemeButton(yes, bg: "#c8f000", fg: "#0b0b0c", over: "#d6ff2e", pressed: "#a6c800", border: "#c8f000");
+        var no = new Button
+        {
+            Content = "Cancel", Width = 100,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+        };
+        ThemeButton(no, bg: "#1f1f24", fg: "#e8e8e6", over: "#2a2a30", pressed: "#161618", border: "#48484f");
+        var buttons = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Spacing = 8,
+        };
+        buttons.Children.Add(no);
+        buttons.Children.Add(yes);
+
+        var panel = new StackPanel { Margin = new Avalonia.Thickness(22), Spacing = 18 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Foreground = Avalonia.Media.Brush.Parse("#e8e8e6"), FontSize = 13,
+        });
+        panel.Children.Add(buttons);
+
+        var dlg = new Window
+        {
+            Title = "Confirm", Width = 460, SizeToContent = SizeToContent.Height, CanResize = false,
+            Background = Avalonia.Media.Brush.Parse("#16161a"),
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = panel,
+        };
+        yes.Click += (_, _) => dlg.Close(true);
+        no.Click += (_, _) => dlg.Close(false);
+        return await dlg.ShowDialog<bool>(this);
+    }
+
+    /// <summary>Pin a button's colours across rest/hover/press by overriding the Fluent theme's
+    /// per-state resource keys (setting Background/Foreground alone gets overridden on hover).</summary>
+    private static void ThemeButton(Button b, string bg, string fg, string over, string pressed, string border)
+    {
+        void Set(string key, string color) => b.Resources[key] = Avalonia.Media.Brush.Parse(color);
+        Set("ButtonBackground", bg);   Set("ButtonBackgroundPointerOver", over); Set("ButtonBackgroundPressed", pressed); Set("ButtonBackgroundDisabled", bg);
+        Set("ButtonForeground", fg);   Set("ButtonForegroundPointerOver", fg);   Set("ButtonForegroundPressed", fg);     Set("ButtonForegroundDisabled", fg);
+        Set("ButtonBorderBrush", border); Set("ButtonBorderBrushPointerOver", border); Set("ButtonBorderBrushPressed", border);
+        b.BorderThickness = new Avalonia.Thickness(1);
+        b.CornerRadius = new Avalonia.CornerRadius(0);
     }
 
     private async Task<string?> PickFolderAsync()
@@ -62,6 +141,10 @@ public partial class MainWindow : Window
             vm.StatusText = "Game folder changed — click “Load sounds” to re-index.";
         if (result.WordlistChanged && vm.IndexLoaded)
             await vm.ApplyWordlistAsync();
+        if (result.ParakeetSelected)
+            await vm.EnsureParakeetAsync();
+        // Engine selection may have changed which engine is active; recompute UI availability.
+        vm.RefreshTranscriptionAvailability();
     }
 
     private void OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
