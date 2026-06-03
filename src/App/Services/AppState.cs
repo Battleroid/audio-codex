@@ -207,6 +207,24 @@ public sealed class AppState
     }
 
     public string CacheKey(SoundEntry s) => $"{s.TagId}:{s.Size}";
+
+    /// <summary>Decode a sound to a private per-entry WAV for transcription. The shared playback
+    /// cache is keyed by TagId alone, but two SoundEntry records can share a TagId (different
+    /// package/size); keying this on TagId+Size — matching the transcript cache key — stops
+    /// parallel workers reading each other's audio or deleting a decode still in use. Returns the
+    /// path (caller deletes it) or null on failure.</summary>
+    private string? DecodeToWavForTranscribe(SoundEntry s)
+    {
+        if (Manager == null) return null;
+        string baseName = $"tr_{s.TagId}_{s.Size}";
+        string wem = Path.Combine(TempDir, baseName + ".wem");
+        string wav = Path.Combine(DecodeCacheDir, baseName + ".wav");
+        Directory.CreateDirectory(TempDir);
+        try { File.WriteAllBytes(wem, Manager.ReadWem(s)); } catch { return null; }
+        bool ok = Vgm.DecodeToWav(wem, wav);
+        try { File.Delete(wem); } catch { }
+        return ok ? wav : null;
+    }
     private const int PeakCols = 600;
 
     /// <summary>Metadata + waveform peaks for a sound. Served from the on-disk cache;
@@ -524,8 +542,15 @@ public sealed class AppState
         if (!useParakeet && !Whisper.Available) return null;
         EnsureCorpus();
 
-        string? wav16 = DecodeTo16kMonoWav(s);
-        if (wav16 == null) return null;
+        // Per-entry decode (not the shared {TagId}.wav cache) so same-TagId entries don't collide
+        // in a parallel batch. Reused below for the optional denoise pass.
+        string? full = DecodeToWavForTranscribe(s);
+        string? wav16 = full != null ? Resample16kMono(full) : null;
+        if (wav16 == null)
+        {
+            if (full != null) try { File.Delete(full); } catch { }
+            return null;
+        }
 
         // Engine dispatch: Parakeet (sherpa-onnx, GPU) when selected/available, else whisper.cpp.
         Whisper.Result? Run(string w) => useParakeet
@@ -545,7 +570,6 @@ public sealed class AppState
                 // hurts ASR (validated), so this never touches confirmed or clearly-garbage lines.
                 if (Config.DenoiseFallback && DeepFilter.Available && ready && m is { } mm && mm.score < 0.62)
                 {
-                    string? full = DecodeToWav(s);
                     string dnDir = Path.Combine(TempDir, "denoise");
                     string? dnFull = full != null ? DeepFilter.Denoise(full, dnDir, ct) : null;
                     string? dn16 = dnFull != null ? Resample16kMono(dnFull) : null;
@@ -575,8 +599,9 @@ public sealed class AppState
         finally
         {
             try { File.Delete(wav16); } catch { }
-            if (cleanupDecoded)
-                try { File.Delete(Path.Combine(DecodeCacheDir, $"{s.TagId}.wav")); } catch { }
+            // The per-entry decode is transcription-only; drop it in batches to bound temp growth.
+            if (cleanupDecoded && full != null)
+                try { File.Delete(full); } catch { }
         }
     }
 
