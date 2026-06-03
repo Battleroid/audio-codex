@@ -607,16 +607,23 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
         if (IsTranscribing) { StatusText = "A run is already in progress."; return; }
         IsTranscribing = true; TranscribeProgress = 0; TranscribeStatus = "Setting up Parakeet…";
+        // Use the shared CTS so the Cancel button and window-close can abort the multi-GB setup.
+        _transcribeCts = new CancellationTokenSource();
         try
         {
-            using var cts = new CancellationTokenSource();
             bool ok = await _state.EnsureParakeetAsync(
-                (p, m) => Dispatcher.UIThread.Post(() => { TranscribeProgress = p; TranscribeStatus = m; }), cts.Token);
-            StatusText = ok ? $"Parakeet ready ({(_state.Parakeet.UsesCuda ? "GPU" : "CPU")})."
+                (p, m) => Dispatcher.UIThread.Post(() => { TranscribeProgress = p; TranscribeStatus = m; }), _transcribeCts.Token);
+            StatusText = _transcribeCts.IsCancellationRequested ? "Parakeet setup cancelled."
+                       : ok ? $"Parakeet ready ({(_state.Parakeet.UsesCuda ? "GPU" : "CPU")})."
                             : "Parakeet setup failed (check connection).";
         }
+        catch (OperationCanceledException) { StatusText = "Parakeet setup cancelled."; }
         catch (Exception ex) { StatusText = "Parakeet setup failed: " + ex.Message; }
-        finally { IsTranscribing = false; TranscribeStatus = ""; }
+        finally
+        {
+            IsTranscribing = false; TranscribeStatus = "";
+            _transcribeCts?.Dispose(); _transcribeCts = null;
+        }
     }
 
     /// <summary>Re-snap every cached transcript to the nearest canonical in-game line.</summary>

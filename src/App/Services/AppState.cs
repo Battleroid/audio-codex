@@ -373,13 +373,15 @@ public sealed class AppState
     // onnxruntime dlls, not cuBLAS/cudart/cuFFT/cuRAND/cuDNN). Driver is forward-compatible.
     private const string CudaRedist = "https://developer.download.nvidia.com/compute/cuda/redist/";
     private const string CudnnRedist = "https://developer.download.nvidia.com/compute/cudnn/redist/";
-    private static readonly string[] CudaLibZips =
+    // Each redist zip paired with a representative DLL it must produce, so an interrupted setup
+    // can resume by fetching only the zips whose marker is still missing.
+    private static readonly (string url, string marker)[] CudaLibZips =
     {
-        CudaRedist + "libcublas/windows-x86_64/libcublas-windows-x86_64-12.6.4.1-archive.zip",
-        CudaRedist + "cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-12.6.77-archive.zip",
-        CudaRedist + "libcufft/windows-x86_64/libcufft-windows-x86_64-11.3.0.4-archive.zip",
-        CudaRedist + "libcurand/windows-x86_64/libcurand-windows-x86_64-10.3.7.77-archive.zip",
-        CudnnRedist + "cudnn/windows-x86_64/cudnn-windows-x86_64-9.8.0.87_cuda12-archive.zip",
+        (CudaRedist + "libcublas/windows-x86_64/libcublas-windows-x86_64-12.6.4.1-archive.zip", "cublasLt64_12.dll"),
+        (CudaRedist + "cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-12.6.77-archive.zip", "cudart64_12.dll"),
+        (CudaRedist + "libcufft/windows-x86_64/libcufft-windows-x86_64-11.3.0.4-archive.zip", "cufft64_11.dll"),
+        (CudaRedist + "libcurand/windows-x86_64/libcurand-windows-x86_64-10.3.7.77-archive.zip", "curand64_10.dll"),
+        (CudnnRedist + "cudnn/windows-x86_64/cudnn-windows-x86_64-9.8.0.87_cuda12-archive.zip", "cudnn64_9.dll"),
     };
 
     /// <summary>Download + extract the sherpa-onnx runtime and the Parakeet model on first enable.</summary>
@@ -397,12 +399,15 @@ public sealed class AppState
             if (ex != null) { CopyDir(Path.Combine(ex, "bin"), binDir); try { Directory.Delete(ex, true); } catch { } }
         }
 
-        // GPU runtime: onnxruntime's CUDA provider needs cuBLAS/cudart/cuFFT/cuRAND/cuDNN.
-        if (CudaAvailable && !File.Exists(Path.Combine(binDir, "cublasLt64_12.dll")))
+        // GPU runtime: onnxruntime's CUDA provider needs cuBLAS/cudart/cuFFT/cuRAND/cuDNN. Fetch
+        // only the zips whose marker DLL is missing, so a partial/interrupted download resumes
+        // correctly instead of leaving sherpa to fail at transcribe time on an absent DLL.
+        if (CudaAvailable)
         {
-            for (int i = 0; i < CudaLibZips.Length; i++)
-                await FetchZipDllsAsync(CudaLibZips[i], binDir, "Downloading GPU runtime",
-                    0.05 + 0.20 * i / CudaLibZips.Length, 0.05 + 0.20 * (i + 1) / CudaLibZips.Length, progress, ct);
+            var missing = CudaLibZips.Where(z => !File.Exists(Path.Combine(binDir, z.marker))).ToList();
+            for (int i = 0; i < missing.Count; i++)
+                await FetchZipDllsAsync(missing[i].url, binDir, "Downloading GPU runtime",
+                    0.05 + 0.20 * i / missing.Count, 0.05 + 0.20 * (i + 1) / missing.Count, progress, ct);
         }
 
         if (!Directory.Exists(modelDir) || !Directory.EnumerateFiles(modelDir, "encoder*.onnx").Any())
